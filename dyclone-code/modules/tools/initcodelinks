@@ -1,0 +1,37 @@
+#!/bin/bash
+
+if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "Usage: $0 <src dir> <dst dir> [number]"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+if [[ ! -d "$2" ]]; then
+    echo "Error: dst dir '$2' invalid"
+    exit 65
+fi
+
+abspath=$( cd $1; pwd )
+
+cd $2
+if [ $# -eq 3 ]; then
+    if [ $3 -ge 1000000 ]; then
+        echo "Warning: are you sure about \$3=$3? I exit."
+        exit 1
+    fi
+    find "$abspath" -name "*.foo.c" | head -n $3 | while read fn; do
+        trunkbase=`basename $fn`
+        ln -s $fn $trunkbase
+    done
+else
+    find "$abspath" -name "*.foo.c" | while read fn; do
+        trunkbase=`basename $fn`
+        ln -s $fn $trunkbase
+    done
+fi
+
+exit 0
+

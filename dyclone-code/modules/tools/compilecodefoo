@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# compare all the code trunks (.foo.c)
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+CC=gcc
+CCFLAGS="-O3 -I ${scriptdir}/../C/ ${scriptdir}/../C/libdyc.so"
+debug="true"
+
+
+if [[ $# -ne 1 && $# -ne 2 ]]; then
+    echo "Usage: $0 <src file list> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -f "$1" ]]; then
+    echo "Error: src file list '$1' invalid"
+    exit 65
+fi
+
+dstabspath=
+if [[ "$2" != "" ]]; then
+    if [[ ! -d "$2" ]]; then
+        echo "Error: dst dir '$2' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $2; pwd)
+    fi
+fi
+
+while read oneinput; do
+    oneinput=`echo $oneinput | cut -d'|' -f1`
+    # no longer use code links: trunkname=$( codetrunkname $oneinput )  # treat $oneinput as a link and resolve it
+    trunkname=${oneinput%.c}
+    exename=${trunkname}.exe    # the same location as the source code
+    if [[ "$dstabspath" != "" ]]; then
+        # use the location provided by $2
+        exename=$dstabspath/`basename $trunkname`.exe
+    fi
+    if [[ ! -f "$exename" ]]; then
+        genlinkfn=$(headerObjFile $oneinput)
+        if [[ $? -ne 0 ]]; then
+            continue
+        fi
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: ${CC} -o $exename ${scriptdir}/../C/dycmain.o ${trunkname}.c $genlinkfn ${CCFLAGS}" 1>&2
+        fi
+        ${CC} -o "$exename" ${scriptdir}/../C/dycmain.o "${trunkname}.c" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Compiling failure: $oneinput" 1>&2
+        else
+            # save some disk space
+            strip $exename
+        fi
+    else
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: $exename exists already" 1>&2
+        fi
+    fi
+done < $1
+
+

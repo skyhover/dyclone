@@ -1,0 +1,29 @@
+#!/usr/bin/python
+
+def factorial(x):
+    """ Work out x! (with a little help from the google calculator...) """
+
+    import re
+    import urllib
+    import time
+
+    time.sleep(2)
+
+    class AppURLopener(urllib.FancyURLopener):
+        def __init__(self, *args):
+            # *Cough* *Cough*
+            self.version = 'Mozilla 1.3'
+            urllib.FancyURLopener.__init__(self, *args)
+
+    opener = AppURLopener()
+    page = opener.open('http://www.google.com/search?q=%d!' % x).read()
+
+    result = re.findall('<b>%d ! = (.*?)</b>' % x, page)
+
+    if result:
+        return int(result[0].replace('<font size=-2> </font>', ''))
+    else:
+        raise Exception, "Google not willing today!:\n\n %s" % page
+
+factorial (10)
+

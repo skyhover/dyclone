@@ -1,0 +1,39 @@
+#!/usr/bin/python
+
+import sys
+
+if len(sys.argv) != 4:
+    print >> sys.stderr, "Usage: ", sys.argv[0], " <src_inputname> <inputid> <permuteid>"
+    sys.exit(1)
+
+#assume the input file has the correct format:
+inf = open(sys.argv[1], 'r')
+startflag = False
+#for line in inf.readlines():
+for line in inf:
+    if line=='\n':
+        continue
+    if line[0]=='I':
+        if startflag: # done reading the current input
+            break
+        ids = line.splitlines()[0].split('.')
+        cid = ids[0][1:]
+        pid = ids[1]
+        if cid != sys.argv[2] or pid != sys.argv[3]:
+            continue
+        else:  # start reading an input
+            startflag = True
+    else:
+        if startflag:
+            print line,
+        else:
+            continue
+
+inf.close()
+
+if startflag:
+    sys.exit(0)
+else:
+    sys.exit(1)
+
+

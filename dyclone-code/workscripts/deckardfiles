@@ -1,0 +1,24 @@
+#!/usr/bin/python2.4
+
+import re
+import sys
+import clusterfiltering
+import deckardfiltering
+
+def getfilenames( names, cluster ):
+    rs = map(deckardfiltering.vector_linerange, cluster)
+    for i in range(len(rs)):
+        loc = clusterfiltering.getlocations(rs[i][0])
+        names[loc[3]] = loc[0]
+    return names
+
+if len(sys.argv) != 2:
+    print "Usage: ", sys.argv[0], " <orig clone reports>"
+    sys.exit(1)
+
+clusters = deckardfiltering.readclusters( sys.argv[1] )
+clusters= reduce(getfilenames, clusters, {})
+for n in clusters:
+    print clusters[n]
+
+

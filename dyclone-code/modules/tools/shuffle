@@ -1,0 +1,26 @@
+#!/usr/bin/python
+
+import sys
+import random
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], " <file> <how many>"
+    sys.exit(1)
+
+#assume the input file has the correct format:
+inf = open(sys.argv[1], 'r')
+lines = inf.readlines()
+inf.close()
+cc = len(lines)
+if cc<=int(sys.argv[2]):
+    for x in lines:
+        print x,
+else:
+    aa = range(cc)
+    random.shuffle(aa)
+    aa = aa[0:int(sys.argv[2])]
+    for x in aa:
+        print lines[x],
+
+sys.exit(0)
+

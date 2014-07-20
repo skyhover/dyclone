@@ -1,0 +1,134 @@
+#!/bin/bash
+
+# Compile all the header files for code trunks (.hd.c) on a SGE/ROCKS cluster
+# Note: Overhead may be too much if we create a job for each .c file, so each job is created for a sub-directory of $1, except for the headers
+# better not to put <srcdir> and <dstdir> in each other
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+if [[ $# -ne 3 && $# -ne 4 ]]; then
+    echo "Usage: $0 <# cluster nodes> <src dir> <srcfile list> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -d "$2" ]]; then
+    echo "Error: src dir '$2' invalid"
+    exit 65
+fi
+if [[ ! -f "$3" ]]; then
+    echo "Error: src file list '$3' invalid"
+    exit 65
+fi
+
+srcabspath=$( cd $2; pwd )
+dstabspath=
+
+if [[ "$4" != "" ]]; then
+    if [[ ! -d "$4" ]]; then
+        echo "Error: dst dir '$4' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $4; pwd)
+    fi
+else
+    dstabspath=`pwd`
+fi
+
+codefilename=`head -n 1 $3 | cut -d'|' -f1`
+if [ "$srcabspath${codefilename#$srcabspath}" != "$codefilename" ]; then
+    echo "Error: directory mismatched between \$1 and \$3: '$srcabspath' vs. `dirname $codefilename`"
+    exit 65
+fi
+
+LOGFILE=$dstabspath/__dyc_`basename $0`.log
+LOGFILEFAIL=$dstabspath/__dyc_`basename $0`.failed
+
+clusternodenumber=$1
+
+# something is shared and should be done once at the beginning:
+# compile the dyc library
+${scriptdir}/../C/build.sh
+# compile the headers for code trunks; put .o with .c via emtpy $3
+# TODO: we may just use "compilecodeheaders", instead of SGE
+${scriptdir}/cluster_compilecodeheaders $clusternodenumber "$srcabspath" #"$dstabspath"
+#${scriptdir}/compilecodeheaders "$srcabspath"
+if [ $? -ne 0 ]; then
+    echo "Error: ${scriptdir}/cluster_compilecodeheaders $clusternodenumber $srcabspath"
+    exit 1
+fi
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFILEFAIL
+
+echo "create and clean the directory for storing job scripts..." | tee -a $LOGFILE
+jobrootdir=$dstabspath/`basename $0`.jobscripts
+# mkdir -p "$jobrootdir" and rm $jobrootdir/* -rf
+reflashdir "$jobrootdir"
+if [ $? -ne 0 ]; then
+    echo "Error: $0: reflashdir $jobrootdir" | tee -a $LOGFILEFAIL
+    exit 1
+fi
+jobrootdir=$(cd "$jobrootdir"; pwd)
+typeset -a scriptjobs  # encode $jobname-$jobid pair as "$jobname.$jobid"
+
+# split $3 into smaller ones, 1000 lines each
+codelistdir=$jobrootdir/`basename $3`.split
+mkdir -p "$codelistdir"
+split -l 1000 -d -a 4 $3 $codelistdir/`basename $3`.
+if [ $? -ne 0 ]; then
+    echo "Error: split -l 1000 -d -a 4 $3 $codelistdir/`basename $3`." | tee -a $LOGFILEFAIL
+    exit 1
+fi
+
+jobdir=$jobrootdir/`basename $3`.sh
+mkdir -p $jobdir
+# compiling .foo.c and .gen.c
+jobnumber=0
+while read srcsublist; do
+    jobnumber=$((jobnumber+1))
+    jobnamebase=`basename srcsublist`
+    jobname=$jobdir/sge_$jobnamebase.$jobnumber.sh
+    echo "#!/bin/bash" > $jobname
+    echo "# cwd = `pwd`" >> $jobname
+    # SGE options:
+    # request SGE to use the current working directory, instead of /home/bird, as starting point
+    echo "#$ -cwd" >> $jobname
+    # merge stderr into stdout. Disable for now.
+    #echo "#$ -j y" >> $jobname
+    echo "#$ -o $jobname.o\$JOB_ID" >> $jobname
+    echo "#$ -e $jobname.e\$JOB_ID" >> $jobname
+    # use bash to interprete the shell (and also enable a tty with stderr/stdout etc.)
+    echo "#$ -S /bin/bash" >> $jobname
+
+    # simply put .exe along with .c
+    echo "$scriptdir/compilecodelist $srcsublist" >> $jobname
+    echo "touch $jobname.done" >> $jobname
+    # don't submit too many jobs at once:
+    holdonSubmitJobs $clusternodenumber 20 | tee -a $LOGFILE
+    if [ $? -ne 0 ]; then
+        echo "Error on holdonSubmitJobs. Exit for safety." | tee -a $LOGFILEFAIL
+        exit 1
+    fi
+    jobid=`qsub $jobname`
+    if [ $? -ne 0 ]; then
+        echo "Job submission failure: $jobname" | tee -a $LOGFILEFAIL
+    else
+        jobid=`echo $jobid | cut -d' ' -f3`
+        echo "Job ID $jobid ($jobname) submitted" | tee -a $LOGFILE
+        scriptjobs[$jobnumber]="$jobname.$jobid"
+    fi
+done < <( find $codelistdir -maxdepth 1 -name "`basename $3`.*" )  # find all the splitted code list files
+
+# wait for all jobs to finish
+waitforalljobs $jobnumber scriptjobs 20 | tee -a $LOGFILE
+if [ $? -ne 0 ]; then
+    echo "Error on waitforalljobs. Exiting..." | tee -a $LOGFILEFAIL
+else
+    #once we get here, we're done, so aggregate the results if needed.
+    echo "All Compilation Done" | tee -a $LOGFILE
+fi
+
+# save the accounting file
+cp $SGE_ROOT/$SGE_CELL/common/accounting $dstabspath/__dyc_accounting.`basename $0`
+

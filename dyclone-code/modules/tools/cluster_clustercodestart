@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# This script must be called on the master node due to certain realities.
+case $HOSTNAME in
+    elvis.cs.ucdavis.edu)
+        echo "Hostname valid. Continue."
+        ;;
+    *)
+        echo "Hostname $HOSTNAME invalid. Exit." 1>&2
+        exit 1
+        ;;
+esac
+
+
+# All directory names are absolute paths for easy handling
+
+if [[ $# -ne 3 && $# -ne 2 ]]; then
+    echo "Usage: $0 <# cluster nodes> <root_of_INPUTs [startid]>" 1>&2
+    exit 65
+fi
+
+if [ $1 -le 0 ]; then
+    echo "Error: invalide clusternodenumber '$1'" 1>&2
+    exit 65
+fi
+clusternodenumber=$1
+
+if [ ! -d "$2" ]; then
+    echo "Error: input directory '$2' invalid." 1>&2
+    exit 65
+fi
+rootdir=$( cd $2; pwd )
+localdir=/state/partition1/bird/jlx/dyclone
+
+startid=0
+if [ $# -eq 3 ]; then
+    if [ $3 -lt 0 ]; then
+        echo "Error: StartID should >= 0" 1>&2
+        exit 65
+    fi
+    if [ ! -d $2/$3 ]; then
+        echo "Error: directory '$2/$3' invalid" 1>&2
+        exit 65
+    fi
+    startid=$3
+fi
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+. $scriptdir/config.sh
+. $scriptdir/cluster_clustercode
+
+LOGFILE=$rootdir/__dyc_log.`basename $0`
+LOGFAILED=$rootdir/__dyc_failed.`basename $0`
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFAILED
+
+if ! [ -f $rootdir/$startid/$metadatadir/L$startid ]; then
+    echo "Error: $rootdir/$startid/$metadatadir/L$startid invalid. Create it first by running:" | tee -a $LOGFAILED
+    echo "$scriptdir/initcodelist <srcdir> $rootdir/$startid/$metadatadir/L$startid" | tee -a $LOGFAILED
+    exit 65
+fi
+
+nextid=$((startid+1))
+echo $nextid > $rootdir/$startid/$metadatadir/nextid
+
+ec=0
+# since we could only submit jobs on the master node, we have to do it manually here:
+jobname=$(newjob $localdir/dyclone/modules/tools $rootdir/$startid $nextid $clusternodenumber $localdir)
+# the jobname should be an absolute file name. 
+ec=$?
+if [ $ec -ne 0 ]; then
+    echo "Error: newjob $localdir/dyclone/modules/tools $rootdir/$startid $nextid $clusternodenumber $localdir" | tee -a $LOGFAILED
+    exit 1
+fi
+# a naive check to avoid jobs to be submitted again:
+if [ -f "$jobname.done" ]; then
+    echo "Warning: job $jobname has been done! Skip it or delete the .done file if a new run is really required." | tee -a $LOGFAILED
+    exit 1
+fi
+if [ `cat $rootdir/$startid/$metadatadir/pL$startid 2> /dev/null | wc -l` -ge `cat $rootdir/$startid/$metadatadir/L$startid 2> /dev/null | wc -l` ]; then
+    echo "Warning: all files in job $jobname have been processed (cf. pL$startid). Skip it." | tee -a $LOGFAILED
+    exit 1
+fi
+ls $jobname.* >& /dev/null
+if [ $? -eq 0 ]; then  # the files exist; so don't submit again
+    echo "Warning: job $jobname is being processed. Skip it. Check it please." | tee -a $LOGFAILED
+    exit 1
+fi
+jobid=`qsub $jobname`
+ec=$?
+if [[ $ec -ne 0 ]]; then
+    echo "Error: newjob: qsub $jobname" | tee -a $LOGFAILED
+else
+    jobid=`echo $jobid | cut -d' ' -f3`
+    echo "Job ID $jobid ($jobname) submitted" | tee -a $LOGFILE
+fi
+
+# TODO: what would be a convenient interface to automatically submit sub-jobs generated for sub-clusters?
+
+exit $ec
+
+

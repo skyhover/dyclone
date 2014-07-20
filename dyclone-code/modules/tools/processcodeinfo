@@ -1,0 +1,80 @@
+#!/usr/bin/python
+
+# process a __dyc_codeinfo file to accumulate info, and
+# prepare command line options for each file (stored in a $filename.para, and may be deleted later by other scripts)
+# TODO: haven't consider load balance for each file yet; or it's unnecessary.
+
+import sys, os
+
+if len(sys.argv) != 4:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<srcdir> <codeinfo> <dstdir>"
+    print >> sys.stderr, "\t Generate .param file in <dstdir> for each file in <srcdir> based on <codeinfo>. <dstdir> mimics the structure of <srcdir>"
+    sys.exit(1)
+
+sourcefiles=set()  # the set of valid source files; used to match file names in <codeinfo>
+funnames=set()
+codeinfohash={}
+
+# NOTE: since the file name in the codeinfo may not match files in <srcdir>
+#       so we search <srcdir> to get the valid files first:
+srcdir=os.path.normpath(sys.argv[1])
+if not os.path.isdir(srcdir):
+    print >> sys.stderr, "Error: invalid directory", sys.argv[1]
+    sys.exit(1)
+for r, dirs, files in os.walk(srcdir):
+    if r == srcdir:
+        for fn in files:
+            sourcefiles.add(fn)
+    elif len(r)>len(srcdir)+1:
+        for fn in files:
+            sourcefiles.add(os.path.join(r[len(srcdir)+1:], fn))
+    else:
+        print >> sys.stderr, "Warning: wrong subdirectory '%s' in <srcdir> %s. Ignore %d files under." % (r, srcdir, len(files))
+
+
+# get the appropriate file name (relative to <srcdir>) based on <codeinfo>
+def relfilename ( fn ):
+    s = os.path.normpath(fn)
+    while True:
+        if s in sourcefiles:
+            return s
+        else:
+            r = s.find('/')
+            if r>=0:
+                s = s[r+1:]
+            else:
+                return None
+
+
+f = open(sys.argv[2], 'r')
+#for line in f.readlines():
+for line in f:
+  names = line.split()
+  if len(names)>0:
+    fn = relfilename(names[0])
+    if fn != None: # matched in <srcdir>
+        if fn not in codeinfohash:
+            codeinfohash[fn] = set()
+        for i in range(1,len(names)):
+            if names[i] not in funnames:
+                funnames.add(names[i])
+                codeinfohash[fn].add(names[i])
+f.close()
+
+# dump code info into each file
+for file,funset in codeinfohash.items():
+  # prepare the directory and put the param file in "$dstdir/$file/"
+  paramfn = os.path.join(sys.argv[3], file)
+  os.system("mkdir -p " + paramfn)
+  # write the param file
+  paramf = open(os.path.join(paramfn, os.path.basename(file)+".param"), 'w')
+  if len(funset)==0:
+      print >> paramf, "__dyc_not_chop_any_func_",
+  else:
+      for fun in funset:
+          print >> paramf, fun,
+  paramf.close()
+
+
+
+

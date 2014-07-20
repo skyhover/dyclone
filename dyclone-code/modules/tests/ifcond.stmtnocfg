@@ -1,0 +1,31 @@
+1  stmt id: -1
+   #line 4 "ifcond.c"
+   j = 0;
+#line 5
+   i += j;
+2  stmt id: -1
+   #line 6
+   if (i == j) {
+#line 7
+     i = j * j;
+#line 8
+     printf((char const   * __restrict  )"then branch\n");
+#line 9
+     j = i * i;
+   } else {
+#line 11
+     printf((char const   * __restrict  )"else branch\n");
+   }
+3  stmt id: -1
+   #line 7
+   i = j * j;
+#line 8
+   printf((char const   * __restrict  )"then branch\n");
+#line 9
+   j = i * i;
+4  stmt id: -1
+   #line 11
+   printf((char const   * __restrict  )"else branch\n");
+5  stmt id: -1
+   #line 13
+   return (0);

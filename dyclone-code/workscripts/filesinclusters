@@ -1,0 +1,22 @@
+#!/usr/bin/python2.4
+
+import sys, os
+import clusterfiltering
+import filesinfilteredcluster
+
+def main():
+    f = open(sys.argv[1])  # a list of L*
+    trunktofilenames = {}
+    for c in f:
+        c = c.splitlines()
+        if len(c)<1:
+           continue
+        c = c[len(c)-1]
+        trunktofilenames.update(filesinfilteredcluster.getfilesinfilteredcluster(c))
+    for k in trunktofilenames:
+        print trunktofilenames[k]
+
+
+if __name__ == '__main__':
+   main()
+

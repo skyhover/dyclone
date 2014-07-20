@@ -1,0 +1,6 @@
+#!/bin/bash
+
+if [ -f "$1" ]; then
+    sed -i "s/\<_Bool\>/int/g" "$1"
+fi
+

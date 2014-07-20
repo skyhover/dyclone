@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# remove all .o and .exe files under a directory;
+# sometimes it may be better to use selective removal by "clearunused"
+
+scriptdir=$(cd `dirname $0`; pwd)
+debug="true"
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <target dir>"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: target dir '$1' invalid"
+    exit 65
+fi
+srcabspath=$( cd $1; pwd )
+LOGFILE=$srcabspath/__dyc_`basename $0`.log
+LOGFILEFAIL=$srcabspath/__dyc_`basename $0`.failed
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFILEFAIL
+
+find $srcabspath -name "*.o" -o -name "*.exe" | while read fn; do
+    if [[ "$debug" == "true" ]]; then
+        echo "Removing file: $fn" | tee -a $LOGFILE
+    fi
+    rm -f $fn
+    if [[ $? -ne 0 ]]; then
+        echo "Error: removal failure: $fn" | tee -a $LOGFILEFAIL
+    fi
+done
+
+

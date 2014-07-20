@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# list all .foo.c files in a folder
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <src dir>"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+
+scriptdir=$(cd `dirname $0`; pwd)
+abspath=$( cd $1; pwd )
+ 
+
+find "$abspath" -type f -name "*.foo.c" | sort
+

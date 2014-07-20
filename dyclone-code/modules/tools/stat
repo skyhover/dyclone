@@ -1,0 +1,96 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <dir>"
+    exit 1
+fi
+
+# simplify and fix some code:
+time ~/research/CIL/modules/tools/runonce . 
+# it took ~4 hours, but helps speed up chopping.
+
+# run the funchopper
+time ~/research/CIL/modules/tools/batch . chopper >& chopper.v4.log
+# it took almost 4 hours, but it only took ~40minutes if we do "runonce" first which may take several hours.
+# minStmtN=3 -> 449738
+real    35m17.991s
+user    25m42.703s
+sys     6m28.369s
+# initcodelinks
+real    22m3.907s
+user    2m22.639s
+sys     16m22.907s
+# minStmtN=5 -> 397591
+real    33m47.615s
+user    23m27.628s
+sys     5m20.321s
+# reset choppingData minStmtN=5 --> 2497854!
+real    91m13.378s
+user    55m2.209s
+sys     17m43.350s
+# minStmtN=15 -> 1516926, 1542166, 
+# TODO: investigate why different? 
+#     - one reason: quite some file (dib7000m... dib7000p... dib3000mc... hid-input... ia32_binfmt... icmp...) have hundreds of sequential stmts, leading to hundreds of thousands of code trunks which may take hours (and putting so many files in one directory is very slow). ./killproc cilly & kills the code trunk generation at different time, causing the difference.
+#   Probably due to "Too many links" from "mkdir" (32000 soft limit?); 
+#   BTW: total # files (including link files) in the whole file system is limited to 2^32 (besides disk space?)?
+real    75m58.417s
+user    50m31.208s
+sys     12m5.237s
+# minStmtN=15, with bug/feature fixes -> 1569046
+real    94m53.661s
+user    66m5.897s
+sys     12m39.255s
+# minStmtN=10, with bug/feature changes -> 1486827
+real    135m58.218s
+user    67m9.314s
+sys     50m29.324s
+# minStmtN=10, on the cluster without "killproc" -> 6479538, >1.35M for just "serpernt_setkey"
+real    9865m22.609s
+user    544m16.566s
+sys     4189m54.952s
+
+
+# how many .i files after compiling 
+find linux-2.6.24/ -maxdepth 1 -name "*.i" | wc -l
+4750
+# how many .i files are processed by funchopper (succeeded or failed); they must have passed the original CIL
+find chopper/ -maxdepth 1 -name "*.hd.c" | wc -l
+3746
+# how many .i files the original CIL cann't handle (after running "runonce"):
+ls dyccodefix/ -lS | grep -e "[[:space:]]0 Aug" | wc -l
+1002 # the same as: wc -l dyccodefix/__dyc_log.failed
+# how many .i files are NOT processed by funchopper:
+find chopper/ -maxdepth 1 -name "*.hd.c" | c=0; while read fn; do fn=`basename $fn`; fn=${fn%.i.hd.c}.c; if ! [ -f dyccodefix/$fn ]; then echo $fn; c=$((c+1)); fi; done; echo $c
+skbuff.i
+savage_state.i
+2
+# how many .i files MIGHT NOT be successfully processed by funchopper:
+find chopper/ -maxdepth 1 -name "*.hd.c" -size 0 | wc -l
+17
+# TODO: investigate why...
+
+
+# how many functions are processed by funchopper
+ls chopper | while read fn; do if [ -d "chopper/$fn" ]; then echo $fn; fi; done | wc -l
+31998
+25267
+# how many code trunks are generated
+find chopper -name "*.foo.c" | wc -l
+449738
+131852
+
+find chopper/ -name "*.ins" | while read fn; do tail -n 1 $fn; done > chopper/ins.count
+find chopper/ -name "*.rds" | while read fn; do tail -n 1 $fn; done > chopper/rds.count
+awk 'BEGIN{FS=": ";c=0;n=0} {a[$2]+=1;c+=$2;n+=1} END{for (i in a) {print i, a[i]}; print n, c}' chopper/ins.count
+awk 'BEGIN{FS=": ";c=0;n=0} {a[$2]+=1;c+=$2;n+=1} END{for (i in a) {print i, a[i]}; print n, c}' chopper/rds.count
+
+
+# start a clustering job on elvis:
+dyclone/modules/tools/cluster_clustercodestart 1000 INPUT/INPUT200_15_5 0
+# an idea: semi-automatically submit sub-jobs:
+find INPUT/INPUT200_15_5/0/ -name "*.tosubmit" | while read fn; do
+    echo $fn
+    dyclone/modules/tools/submitsubjobs 1000 ${fn%CLSRTT*} tosubmit &
+done
+# one liner:
+find INPUT/INPUT200_15_5/0/ -name "*.tosubmit" | while read fn; do echo $fn; dyclone/modules/tools/submitsubjobs 1000 ${fn%CLSRTT*} tosubmit & done

@@ -1,0 +1,46 @@
+#!/usr/bin/python
+
+# Delete unused files (.o, .exe, etc.), given a list of used code trunk names
+# Each line is in the format: <filename.foo.c>|junk|<num1>|<num2>|<num3>|junk|<num4>|<num5>|<num6>
+
+import sys, os
+import pyheaders
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<dir> <used file list>"
+    sys.exit(1)
+
+if not os.path.isdir(sys.argv[1]):
+    print >> sys.stderr, sys.argv[0], ": the dir invalid:", sys.argv[1]
+    sys.exit(1)
+if not os.path.isfile(sys.argv[2]):
+    print >> sys.stderr, sys.argv[0], ": the file list invalid:", sys.argv[2]
+    sys.exit(1)
+
+filelist = pyheaders.readinfilelist(sys.argv[2])
+filelist = filter(pyheaders.filterfilelist, filelist)
+filemap = {}
+for fl in filelist:
+    tmpfn = os.path.basename(fl[0])
+    if tmpfn[-6:len(tmpfn)] == ".foo.c":
+        tmpfn = tmpfn[0:len(tmpfn)-6]
+    filemap[tmpfn] = True
+
+# remove intermediate, useless files:
+for r, ds, fs in os.walk(sys.argv[1], topdown=False):
+    for f in fs:
+        fbase1,fext1 = os.path.splitext(f)
+        fbase2,fext2 = os.path.splitext(fbase1)
+        if fext1 == '':
+            # a simple check for safety:
+            if os.path.isfile(os.path.join(r, f + ".foo.c")):
+                print >> sys.stderr, "removing", os.path.join(r, f), "......"
+                os.remove(os.path.join(r, f))
+        elif fext1 == '.exe' or fext1 == '.out':
+            if fbase2 not in filemap:
+                print >> sys.stderr, "removing", os.path.join(r, f), "......"
+                os.remove(os.path.join(r, f))
+        # do we need to remove .o files?
+    # for d in ds: not so easy to be selective since os.rmdir can't delete non-empty directories.
+
+

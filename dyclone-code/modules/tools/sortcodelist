@@ -1,0 +1,19 @@
+#!/usr/bin/python
+
+# sort a list of code files, assuming file names are unique;
+# each line is in the format: <filename>|junk|<num1>|<num2>|<num3>
+
+import sys, os
+import pyheaders
+
+if len(sys.argv) != 2:
+    print >> sys.stderr, "Usage:", sys.argv[0], "<codelist>"
+    sys.exit(1)
+
+
+filelist = pyheaders.readinfilelist(sys.argv[1])
+filelist = filter(pyheaders.filterfilelist, filelist)
+#filelist.sort(key=lambda x: (x[1],x[2],x[3]), reverse=True)
+filelist.sort(cmp=pyheaders.cmpfilelist)
+pyheaders.dumpfilelist(filelist)
+

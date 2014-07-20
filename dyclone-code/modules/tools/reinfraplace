@@ -1,0 +1,13 @@
+#!/bin/bash
+
+if [[ $# -eq 0 || $# -gt 4 ]]; then
+    echo "Usage: $0 <dir> [<prefix> [<flimit> [<dlimit>]]]"
+    exit 1
+fi
+
+scriptdir=$(cd `dirname $0`; pwd)
+
+. $scriptdir/utils.sh
+
+reinfraplacement $1 $2 $3 $4
+

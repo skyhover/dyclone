@@ -1,0 +1,46 @@
+#!/usr/bin/python
+
+import sys, os
+
+if len(sys.argv) != 2:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<list of cluster file lists>"
+    sys.exit(1)
+
+clusterlist = []
+
+def filtercluster( cluster ):
+    # inefficient implementation
+    global clusterlist  # why need this decl? An interesting balance adopted by python for resolving name clashes. Cf. http://effbot.org/pyfaq/what-are-the-rules-for-local-and-global-variables-in-python.htm
+    newlist = []
+    res = 0
+    for c in clusterlist:
+        if c.startswith(cluster):
+            newlist.append(c)
+            res = -1
+        elif cluster.startswith(c):
+            newlist.append(cluster)
+            res = 1
+        else:
+            newlist.append(c)
+    if res==0:
+        newlist.append(cluster)
+    if res!=-1:
+        clusterlist = newlist
+    return res
+
+
+inf = open(sys.argv[1], 'r')
+#for line in inf.readlines():
+for line in inf:
+    ll = line.split()
+    if len(ll)==0:
+        continue
+    line = ll[0]
+    filtercluster(line)
+inf.close()
+
+for c in clusterlist:
+    print c
+
+sys.exit(0)
+

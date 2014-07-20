@@ -1,0 +1,67 @@
+#!/bin/bash
+
+scriptpath=$( cd `dirname $0`; pwd )
+. $scriptpath/config.sh
+
+# LOG: This may take several hours for the linux kernel,
+#      but then the chopping will be much faster: about 1 hour.
+#cilcmd="$CILPATH/bin/cilly"
+cilcmd="$CILPATH/obj/x86_LINUX/cilly.asm.exe --commPrintLnSparse --docodeinfo"
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <srcdir> <dstdir>"
+    exit 1
+fi
+
+if ! [ -d $1 ]; then
+    echo "srcdir='$1' is not valid."
+    exit 2
+fi
+
+if ! [ -d $2 ]; then
+    echo "dstdir='$2' is not valid."
+    exit 2
+fi
+
+srcopt=$(cd $1; pwd)
+dstopt=$(cd $2; pwd)
+
+LOGFILE="$dstopt"/__dyc_`basename $0`.log
+LOGFILEFAIL="$dstopt"/__dyc_`basename $0`.failed
+codeinfofile="$dstopt"/__dyc_codeinfo
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFILEFAIL
+echo -n "" > $codeinfofile
+# look for all *.i in $srcopt
+cd $srcopt
+find . -name "*.i" | while read fn; do
+    # each file name starts with "./"
+    fndir=`dirname $fn`
+    if [ "$fndir" != "." ]; then
+        # the file is in a subdirectory, so mimic the directory
+        mkdir -p $dstopt/$fndir
+    fi
+    nfn=$dstopt/$fn  # may have a "./" in the middle
+    echo -n "'$srcopt/$fn' --> $nfn ...... "
+    cp -f "$fn" "$nfn"
+
+    # run each code transformation once is enough: 
+    # No.1:
+    $scriptpath/codefix "$nfn" # CIL can't parse some C features
+
+    # No.2: run a native CIL once first so that each stmt is 
+    # on a different line, and get some code info, and make code simpler for later runs.
+    fnn=${nfn%.*}
+    $cilcmd --out "${fnn}.cil.c" "$nfn" >> $codeinfofile #TODO: may use .i suffix to supress gcc preprocessing (don't take too much time)
+    ecode=$?
+    if [ $ecode -ne 0 ]; then
+        echo "'$fn' --> $nfn ...... Failed." | tee -a ${LOGFILEFAIL}
+    else
+        # uneccessary when we use --commPrintLnSparse provided by CIL: sed -i "s/^#.*//" "${fnn}.cil.c"
+        echo "Done."
+    fi
+    rm -f "$nfn" # for saving disk space
+done
+
+

@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# compare all the header files for code trunks (.hd.c)
+
+scriptdir=$(cd `dirname $0`; pwd)
+
+
+if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "Usage: $0 <src dir> <srcfile list> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+if [[ ! -f "$2" ]]; then
+    echo "Error: src file list '$2' invalid"
+    exit 65
+fi
+
+srcabspath=$( cd $1; pwd )
+dstabspath=
+
+if [[ "$3" != "" ]]; then
+    if [[ ! -d "$3" ]]; then
+        echo "Error: dst dir '$3' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $3; pwd)
+    fi
+fi
+
+
+${scriptdir}/../C/build.sh
+${scriptdir}/compilecodeheaders "$srcabspath" "$dstabspath"
+${scriptdir}/compilecodelist $2 "$dstabspath"
+

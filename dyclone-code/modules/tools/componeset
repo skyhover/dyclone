@@ -1,0 +1,284 @@
+#!/usr/bin/python
+
+# Different comparing strategies from "comptwo*" due to a different similarity measurement.
+
+# Given one output file and a set of outputs in one file, return 0 if they have a matching output (orders of the output values are not considered); otherwise, return 1. TODO: optimize the definition of "matching"
+# Assume each line in each output is an output value.
+# If the execution is failed, the failure type (exit code) is also considered.
+# Update: if an execution fails, we don't consider it;
+#         if all executions for an input fails, put it into a special case.
+
+# NOTE: not handle empty outputs here; more efficient to filter them out before execution
+
+# "readlines" is memory-expensive, often better (but less convenient) to use "readline"
+
+import sys, os
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<outputfile> <outputs file>"
+    print >> sys.stderr, "\tReturn 0 if they share a same output."
+    sys.exit(1)
+
+if not os.path.isfile(sys.argv[1]):
+    print >> sys.stderr, sys.argv[0], ": the first outputfile invalid:", sys.argv[1]
+    sys.exit(1)
+if not os.path.isfile(sys.argv[2]):
+    print >> sys.stderr, sys.argv[0], ": the second outputsfile invalid:", sys.argv[2]
+    sys.exit(1)
+
+# the output separators must be "O<number>.<number>.<exitcode>"
+# memory-intensive and slow if the output is huge --> limit it to the first 'elementlimit' elements
+elementlimit = 1000
+permutationlimit = 100  # 5!
+
+def readoneoutput (file):
+    # if the suffix (the exit code) shows failure, return None:
+    idot = file.rfind('.')
+    ec = -1
+    if idot!=-1:
+        ec = int(file[idot+1:])
+    if ec!=0:
+        return None
+    f = open(file, 'r')
+    outputvalues=[]
+    lc = 0
+    # memory costly: for line in f.readlines():
+    #while True:
+    #    line = f.readline()
+    #    if line=='': # EOF
+    #        break
+    for line in f:
+        if lc > elementlimit:
+            break
+        if line=='\n':
+            continue
+        l = line.splitlines()
+        if len(l)>0 and l[0]!='':
+            outputvalues.append(l[0])
+            lc += 1
+    f.close()
+    outputvalues.sort()
+    return ''.join(outputvalues)
+
+def readoutputs (dir):
+    # memory-intensive to read all in once; try use the "elementlimit"
+    # try to separate it into startreadoutputs, readnextoutput, finishreadoutputs
+    # or, use distributed/off-line hashtables.
+    outputs={}
+    allfailed=True
+
+    inf = open(dir, 'r')
+    oneoutput=[]
+    lc = 0
+    totallc = 0
+    failed = True
+    startflag = False
+    #for line in inf.readlines():
+    for line in inf:
+        if totallc > permutationlimit*elementlimit:
+            break
+        if line=='\n':
+            continue
+        if line[0]=='O':  # start a new output
+            startflag = True
+            # save the previous one if not failed
+            if not failed and len(oneoutput)>0:
+                oneoutput.sort()
+                outputs[''.join(oneoutput)] = True
+                oneoutput=[]  # can't use "list.clear"
+                lc = 0
+            ids = line.splitlines()[0].split('.')
+            cid = int(ids[0][1:])
+            pid = int(ids[1])
+            eid = int(ids[2])
+            if eid==0:
+                failed = False
+                allfailed = False
+            else:
+                failed = True
+            continue
+        else:  # reading an output
+            if lc > elementlimit: # too many lines; ignore them
+                continue
+            if not startflag:  # wrong format...very simple check
+                sys.exit(2)
+            l = line.splitlines()
+            if len(l)>0 and l[0]!='':
+                oneoutput.append(l[0])
+                lc += 1
+                totallc += 1
+    # save the last output if not failed
+    if not failed and len(oneoutput)>0:
+        oneoutput.sort()
+        outputs[''.join(oneoutput)] = True
+        oneoutput=[]  # can't use "list.clear"
+    inf.close()
+
+    if allfailed:
+        return None
+    else:
+        return outputs
+
+def outputsallfailed(dir):
+    # return 0 when all outputs are failures; return -1 otherwise.
+    inf = open(dir, 'r')
+    #for line in inf.readlines():
+    for line in inf:
+        if line=='\n':
+            continue
+        if line[0]=='O':  # start a new output
+            ids = line.splitlines()[0].split('.')
+            cid = int(ids[0][1:])
+            pid = int(ids[1])
+            eid = int(ids[2])
+            if eid==0:
+                inf.close()
+                return -1
+            else:
+                continue
+        else:  # inside an output
+            continue
+    inf.close()
+    return 0
+
+
+nextoutputcid = -1
+nextoutputpid = -1
+nextoutputeid = -1
+
+def startreadoutputs( file ):
+    # must declare these according to python's global/local variable rules
+    global nextoutputcid
+    global nextoutputpid
+    global nextoutputeid
+    nextoutputcid = -1
+    nextoutputpid = -1
+    nextoutputeid = -1
+    ins = open(file, 'r')
+    return ins
+
+def readnextoutput( filehd ):
+    global nextoutputcid
+    global nextoutputpid
+    global nextoutputeid
+    oneoutput={}
+    # can't use readlines() here
+    for line in filehd:
+        if line=='\n':
+            continue
+        if line[0]=='O':
+            # start a new output, so set the ids
+            oldcid = nextoutputcid
+            oldeid = nextoutputeid
+            ids = line.splitlines()[0].split('.')
+            if len(ids)>=3:
+                # maybe right format, otherwise, ignore this line
+                nextoutputcid = int(ids[0][1:])
+                nextoutputpid = int(ids[1])
+                nextoutputeid = int(ids[2])
+            if oldcid < 0:
+                # it's the first output, continue reading
+                continue
+            else:
+                # finish reading the current output, so
+                # return it if not failed
+                if oldeid == 0:
+                    return (True, oneoutput)  # empty is also returned
+                else:
+                    return (True, None)  # failed
+        else:
+            # reading for the current output
+            if nextoutputcid < 0: # the first output has not started yet
+                continue
+            else:
+                if line not in oneoutput:
+                    oneoutput[line]=1
+                else:
+                    oneoutput[line]+=1
+    # save the last output if any and not failed
+    if nextoutputcid < 0: # no more output
+        return (None, None)
+    nextoutputcid = -1
+    if nextoutputeid==0:
+        return (False, oneoutput)
+    else:
+        return (False, None)
+
+def finishreadoutputs( filehd ):
+    c = 0
+    for line in filehd:
+        c += 1
+    if c==0:
+        filehd.close()
+        print >> sys.stderr, "File", sys.argv[2], "read finished and closed"
+        return True
+    else:
+        filehd.close()
+        print >> sys.stderr, "File", sys.argv[2], "read terminated;", c, "more lines are discarded"
+        return False
+
+def issubhash ( ht1, ht2 ):
+    for k in ht1:
+        if k not in ht2:
+            return False
+        if ht1[k]>ht2[k]:
+            return False
+    return True
+
+def compareoutputs(op1, op2s):
+    if op1==None and op2s==None:
+        return 0
+    elif op1==None or op2s==None:
+        return -1
+    if op1 in op2s:
+        return 0
+    return -1
+
+def compareoutputs2(f1, f2):
+    # a version based on readnextoutput
+    output1 = readoneoutput( f1 )
+    #print "output1: ", output1
+    output2file = startreadoutputs( f2 )
+    if output1==None: # failed representative
+        #return compareoutputs4failures(output2file) # true iff all output2 are failures
+        hasmore,op2 = readnextoutput( output2file )
+        allfailed = True
+        while hasmore!=None:
+            #print "output2: ", op2
+            if op2!=None:
+                allfailed = False
+            hasmore,op2 = readnextoutput( output2file )
+        return allfailed
+    elif len(output1)==0: # empty representative
+        #return compareoutputs4failures(output2file) # true iff at least one of output2 is empty
+        hasmore,op2 = readnextoutput( output2file )
+        while hasmore!=None:
+            #print "output2: ", op2
+            if op2!=None and len(op2)==0:
+                return True
+            hasmore,op2 = readnextoutput( output2file )
+        return False
+    else:
+        hasmore,op2 = readnextoutput( output2file )
+        while hasmore!=None:
+            #print "output2: ", op2
+            if op2!=None and len(op2)>0:
+                if issubhash(output1,op2) or issubhash(op2,output1):
+                    return True
+            hasmore,op2 = readnextoutput( output2file )
+        return False
+
+#s = compareoutputs2(sys.argv[1],sys.argv[2])
+output1 = readoneoutput(sys.argv[1])
+if output1 == None: # save some meory for failed cases
+    s = outputsallfailed(sys.argv[2])
+else:
+    output2 = readoutputs(sys.argv[2])
+    s = compareoutputs(output1, output2)
+if s==0:
+    sys.exit(0)
+else:
+    sys.exit(1)
+
+
+

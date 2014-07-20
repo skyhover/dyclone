@@ -1,0 +1,95 @@
+#!/usr/bin/python
+
+# process a codestat file to accumulate info. Reply heavily on the format of codestat
+
+import sys, os
+
+if len(sys.argv) != 2:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<codestat>"
+    print >> sys.stderr, "\t Dump histogram of some code statistics."
+    sys.exit(1)
+
+funs={}  # each element is a hash: funname -> (fsctop, fsctotal, fvuse, fvdef)
+files={}  # each element is a hash: filename -> (sctop, sctotal, vuse, vdef)
+
+f = open(sys.argv[1], 'r')
+curfn = ""
+sctop=0
+sctotal=0
+vuse=0
+vdef=0
+#for line in f.readlines():
+for line in f:
+    if line.find("FILE:")==0:  # starts a new file, so save the old one
+        if curfn!="":
+            if curfn not in files:
+                files[curfn] = (sctop, sctotal, vuse, vdef)
+            else:
+                files[curfn] = (files[curfn][0] + sctop, files[curfn][1] + sctotal, files[curfn][2] + vuse, files[curfn][3] + vdef)
+            sctop=0
+            sctotal=0
+            vuse=0
+            vdef=0
+        curfn = line
+        continue
+    else:
+        counters = line.split()
+        if len(counters)>0:
+            if counters[0] not in funs:
+                funs[counters[0]] = (int(counters[1]), int(counters[2]), int(counters[3]), int(counters[4]))
+            else:
+                funs[counters[0]] = (max(funs[counters[0]][0], int(counters[1])), max(funs[counters[0]][1], int(counters[2])), max(funs[counters[0]][2], int(counters[3])), max(funs[counters[0]][3], int(counters[4])))
+            # accumulate the counters for the current file:
+            sctop += int(counters[1])
+            sctotal += int(counters[2])
+            vuse += int(counters[3])
+            vdef += int(counters[4])
+# save the last file
+if curfn!="":
+    if curfn not in files:
+        files[curfn] = (sctop, sctotal, vuse, vdef)
+    else:
+        files[curfn] = (files[curfn][0] + sctop, files[curfn][1] + sctotal, files[curfn][2] + vuse, files[curfn][3] + vdef)
+f.close()
+
+def sortdictvalue0(tp):
+    return tp[1][0]
+def sortdictvalue1(tp):
+    return tp[1][1]
+def sortdictvalue2(tp):
+    return tp[1][2]
+def sortdictvalue3(tp):
+    return tp[1][3]
+
+# dump codestat into separate files
+funnames = funs.keys()
+funnames.sort()
+g= open(sys.argv[1]+".funnames", 'w')
+for fn in funnames:
+    print >> g, fn, funs[fn]
+g.close()
+funitems = funs.items()
+g= open(sys.argv[1]+".fsctop", 'w')
+funitems.sort(key=sortdictvalue0)
+for (fn,tp) in funitems:
+    print >> g, tp[0], fn, tp
+g.close()
+g= open(sys.argv[1]+".fsctotal", 'w')
+funitems.sort(key=sortdictvalue1)
+for (fn,tp) in funitems:
+    print >> g, tp[1], fn, tp
+g.close()
+g= open(sys.argv[1]+".fvuse", 'w')
+funitems.sort(key=sortdictvalue2)
+for (fn,tp) in funitems:
+    print >> g, tp[2], fn, tp
+g.close()
+g= open(sys.argv[1]+".fvdef", 'w')
+funitems.sort(key=sortdictvalue3)
+for (fn,tp) in funitems:
+    print >> g, tp[3], fn, tp
+g.close()
+
+# TODO: do we need dump file-based stat?
+
+

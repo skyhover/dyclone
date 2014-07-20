@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# compare all the header files for code trunks (.hd.c)
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+CC=gcc
+CCFLAGS="-O3 -fpic -I ${scriptdir}/../C/"
+debug="true"
+
+
+if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "Usage: $0 <# cluster nodes> <src dir> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -d "$2" ]]; then
+    echo "Error: src dir '$2' invalid"
+    exit 65
+fi
+srcabspath=$( cd $2; pwd )
+dstabspath=
+
+LOGFILE=__dyc_`basename $0`.log
+LOGFILEFAIL=__dyc_`basename $0`.failed
+if [[ "$3" != "" ]]; then
+    if [[ ! -d "$3" ]]; then
+        echo "Error: dst dir '$3' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $3; pwd)
+        LOGFILE=$dstabspath/$LOGFILE
+        LOGFILEFAIL=$dstabspath/$LOGFILEFAIL
+    fi
+else 
+    # use the same dir as srcabspath for dstabspath
+    LOGFILE=$srcabspath/$LOGFILE
+    LOGFILEFAIL=$srcabspath/$LOGFILEFAIL
+fi
+
+clusternodenumber=$1
+
+# prepare the directory for storing job scripts
+jobrootdir=`basename $0`.jobscripts
+if [[ "$dstabspath" != "" ]]; then
+    jobrootdir=$dstabspath/$jobrootdir
+else
+    jobrootdir=$srcabspath/$jobrootdir
+fi
+# mkdir -p "$jobrootdir" and rm $jobrootdir/* -rf
+reflashdir "$jobrootdir"
+if [ $? -ne 0 ]; then
+    echo "Error: $0: reflashdir $jobrootdir" | tee -a $LOGFILEFAIL
+    exit 1
+fi
+jobrootdir=$(cd "$jobrootdir"; pwd)
+typeset -a scriptjobs  # encode $jobname-$jobid pair as "$jobname.$jobid"
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFILEFAIL
+
+# compile each .hd.c in a job
+jobnumber=0
+while read oneinput; do
+    objname=${oneinput%.c}.o  # the same location as the source code
+    if [[ "$dstabspath" != "" ]]; then
+        # use the location provided by $2 (not mimicing the src structure yet)
+        objname=$dstabspath/`basename $objname`
+    fi
+    libname=${objname%.o}.so
+    if [[ ! -f "$libname" ]]; then
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: ${CC} ${CCFLAGS} -c -o $objname $oneinput" | tee -a $LOGFILE
+        fi
+        jobnumber=$((jobnumber+1))
+        jobname=$jobrootdir/sge_`basename $oneinput`.$jobnumber.sh
+        echo "#!/bin/bash" > $jobname
+        echo "# cwd = `pwd`" >> $jobname
+        echo "#$ -cwd" >> $jobname
+        echo "#$ -o $jobname.o\$JOB_ID" >> $jobname
+        echo "#$ -e $jobname.e\$JOB_ID" >> $jobname
+        echo "#$ -S /bin/bash" >> $jobname
+        echo "${CC} ${CCFLAGS} -c -o \"$objname\" \"$oneinput\" >& /dev/null" >> $jobname
+        echo "if [[ \$? -ne 0 ]]; then" >> $jobname
+        echo "    echo \"Error: Compiling failure: $oneinput\"" >> $jobname
+        echo "else" >> $jobname
+        echo "    ${CC} -O3 -shared -o \"$libname\" \"$objname\"" >> $jobname
+        echo "    if [ $? -eq 0 ]; then" >> $jobname
+        echo "        strip $libname" >> $jobname
+        echo "        rm $objname" >> $jobname
+        echo "    fi" >> $jobname
+        echo "fi" >> $jobname
+        echo "touch $jobname.done" >> $jobname
+
+        holdonSubmitJobs $clusternodenumber 20 | tee -a $LOGFILE
+        if [ $? -ne 0 ]; then
+            echo "Error on holdonSubmitJobs. Exit for safety." | tee -a $LOGFILEFAIL
+            exit 1
+        fi
+        jobid=`qsub $jobname`  # try not to use this: -l h_rt=01:00:00`
+        if [ $? -ne 0 ]; then
+            echo "Job submission failure: $jobname" | tee -a $LOGFILEFAIL
+        else
+            jobid=`echo $jobid | cut -d' ' -f3`
+            echo "Job ID $jobid ($jobname) submitted" | tee -a $LOGFILE
+            scriptjobs[$jobnumber]="$jobname.$jobid"
+        fi
+    else
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: $libname exists already" | tee -a $LOGFILE
+        fi
+        continue
+    fi
+done < <( find $srcabspath -maxdepth 2 -name "*.hd.c" )
+
+
+waitforalljobs $jobnumber scriptjobs 20 | tee -a $LOGFILE
+if [ $? -ne 0 ]; then
+    echo "Error on waitforalljobs. Exiting..." | tee -a $LOGFILEFAIL
+else
+    #once we get here, we're done, so aggregate the results if needed.
+    echo "All Header Files (.hd.c) Compilation Done" | tee -a $LOGFILE
+fi
+
+# save the accounting file
+cp $SGE_ROOT/$SGE_CELL/common/accounting $jobrootdir/__dyc_accounting.`basename $0`
+

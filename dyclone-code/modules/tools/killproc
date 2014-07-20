@@ -1,0 +1,46 @@
+#!/bin/bash
+
+if [[ $# -ne 1 && $# -ne 2 ]]; then
+	echo "Usage: $0 <prg name to be killed> [logfile name]"
+	exit 65;
+fi
+
+LOG_FILE=log.killed
+if [ $# -eq 2 ]; then
+    LOG_FILE=$2
+fi
+
+PERIOD=20        # seconds or microseconds
+. `dirname $0`/config.sh
+
+# Monitor the execution time of the prg, and kill it if it's too long
+pid=
+while :        
+do
+# Not good for getting pid from the name is fragile, coz could have same names...
+#   pid=`ps -o user,pid,ppid,command ax | grep "$1" | head -n 1 | awk '{print $2}'`
+   pid=`pgrep -n "$1"` # the newest process with prog name $1
+   if [ "$pid.X" != ".X" ]; then
+      pname=$(ps -p $pid -o args=)
+      elapsedtime=`head -n 1 /proc/$pid/stat 2>/dev/null`
+      if [ $? -eq 0 ]; then  # the pid still exists
+          elapsedtime=`echo $elapsedtime | awk '{print $14+$15}'`  # this is in jiffies (10 milliseconds)
+          if [[ $PERIOD -gt 0 && $PERIOD -lt 1000 ]]; then  # assume seconds if "too small"
+              pidtokill=$(echo $elapsedtime | awk -v pid="$pid" -v bound="$PERIOD" '{if ($1>bound*100) {print pid}}')
+          else  # assume microseconds
+              pidtokill=$(echo $elapsedtime | awk -v pid="$pid" -v bound="$PERIOD" '{if ($1*10000>bound) {print pid}}')
+          fi
+          if [ "$pidtokill" != "" ]; then
+              echo "Killed pid: ($pid) $pname at time `date` on $HOSTNAME" | tee -a $LOG_FILE
+              kill -9 $pidtokill
+          fi
+      fi
+  fi
+
+  if [[ $PERIOD -gt 0 && $PERIOD -lt 1000 ]]; then  # assume seconds if "too small"
+      sleep `expr $PERIOD / 2`
+  else
+      usleep `expr $PERIOD / 2`
+  fi
+done
+

@@ -1,0 +1,19 @@
+#!/usr/bin/python2.4
+
+import sys, random
+
+count = 0
+if len(sys.argv) <= 2:
+   if len(sys.argv) == 2:
+      count = int(sys.argv[1])
+else:
+   print >> sys.stderr, "Usage:", sys.argv[0], "[how many [< which file]]"
+   sys.exit(1)
+
+elist = sys.stdin.readlines()
+random.shuffle(elist)
+if count>0:
+   elist = elist[:count]
+for e in elist:
+   print e,
+

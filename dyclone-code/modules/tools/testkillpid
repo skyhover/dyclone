@@ -1,0 +1,38 @@
+#!/bin/bash
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+i=0
+while [ $i -lt 10 ]; do
+    #yes >& /dev/null &
+/home/bird/jlx/dyclone/chopper/tail_conversion.cil.c/indirect2direct/indirect2direct_3714-91992_3800-94723.foo.exe /home/bird/jlx/dyclone/INPUT/INPUT200_15_5/0/5/62/163/174/CLSRTT.0.0/ins/I174.365 &
+    # how to get the pid of the previous background process
+    a=$!
+    echo "yes pid = $a"
+
+    #jobnumber=`jobs | grep 'yes >& /dev/null' | sed "s/.*\[\([[:digit:]]\+\)\].*/\1/"`
+    waittokillpid $a 500000 &  # a bash function may be executed in a separate process too? Seemly yes.
+    b=$!
+    echo "waittokillpid pid = $b"
+    r=0
+    # bash can wait for a finished pid (up to some limit CHILD_MAX (at least 25)?) and return the exit code of the waited pid
+    wait $a || r=$?
+    echo "yes killed: ec = $r"
+    # problem: child processes are killed or not?
+    kill $b &
+    c=$!
+    echo "kill killer pid = $c"
+    #r=0
+    #wait $c || r=$?
+    #echo "killer killed: ec = $r"
+
+    echo "pid $$ done. yes pid $a exit code $r. waittokillpid pid $b killed"
+    i=$((i+1))
+done
+
+exit 0
+
+# this may help check the CHILD_MAX limit
+sh -c 'n=2000; i=1; while [ $i -lt $n ]; do sh -c "exit 99"& eval j$i=$!; i=`expr $i + 1`; done;
+usleep 10000; i=1; while [ $i -lt $n ]; do eval wait \$j$i; [[ $? -ne 99 ]] && echo "out-of-limit: $i"; i=`expr $i + 1`; done'

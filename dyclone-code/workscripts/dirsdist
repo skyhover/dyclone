@@ -1,0 +1,36 @@
+#!/usr/bin/python2.4
+
+import re
+import sys
+
+def main():
+    if len(sys.argv) != 2:
+       print >> sys.stderr, "Usage: ", sys.argv[0], " <a list of directories>"
+       sys.exit(1)
+
+    f = open(sys.argv[1])
+    dirs = {}
+    for fn in f:
+        fn = fn.splitlines()
+        if len(fn)<1:
+           continue
+        fn = fn[len(fn)-1].split()
+        if len(fn)<1:
+           continue
+        fn = fn[len(fn)-1]
+        if fn in dirs:
+           dirs[fn] = dirs[fn]+1
+        else:
+           dirs[fn] = 1
+    keys = dirs.keys()
+    keys.sort()
+    totalc = 0
+    for d in keys:
+        print d, dirs[d]
+        totalc += dirs[d]
+    print "Total:", totalc
+
+
+if __name__ == '__main__':
+   main()
+

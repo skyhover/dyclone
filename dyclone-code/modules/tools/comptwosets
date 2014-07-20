@@ -1,0 +1,84 @@
+#!/usr/bin/python
+
+# Different comparing strategies from "comptwo" due to a different similarity definition.
+
+# Given two sets of outputs, return 0 if they have an exactly same output (may be empty; orders of the output values are not considered); otherwise, return the size of the bigger set.
+# Assume each line in each output is an output value.
+# If the execution is failed, the failure type (exit code) is also considered.
+# Update: if an execution fails, we don't consider it;
+#         if all executions for an input fails, put it into a special case.
+
+import sys, os
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<outputdir1> <outputdir2>"
+    print >> sys.stderr, "Return 0 if they share a same output."
+    sys.exit(1)
+
+if not os.path.isdir(sys.argv[1]):
+    print >> sys.stderr, "the first outputdir invalid:", sys.argv[1]
+    sys.exit(1)
+if not os.path.isdir(sys.argv[2]):
+    print >> sys.stderr, "the second outputdir invalid:", sys.argv[2]
+    sys.exit(1)
+
+# the file name must be "O<number>.<number>.<exitcode>"
+def readoneoutput (file):
+    # if the suffix (the exit code) shows failure, return None:
+    idot = file.rfind('.')
+    ec = -1
+    if idot!=-1:
+        ec = int(file[idot+1:])
+    if ec!=0:
+        return None
+    f = open(file, 'r')
+    outputvalues=f.readlines()
+    outputvalues.sort()
+    f.close()
+    return ''.join(outputvalues)
+
+def readoutputs (dir):
+    outputs={}
+    allfailed=True
+    for r, d, f in os.walk(dir):
+        for o in f:
+            if o[0]=='O':
+                oneoutput = readoneoutput(r+"/"+o)
+                if oneoutput==None:
+                    continue
+                else:
+                    allfailed = False
+                    if oneoutput=='\n' or oneoutput=='':
+                        continue
+                    if oneoutput not in outputs:
+                        outputs[oneoutput] = 1
+                    else:
+                        outputs[oneoutput] += 1
+        # only do the above for files directly under 'dir'
+        del d[:]
+    if allfailed:
+        return None
+    else:
+        return outputs
+
+def compareoutputs(op1, op2):
+    if op1==None and op2==None:
+        return 0
+    elif op1==None or op2==None:
+        return -1
+    for o in op2:
+        if o in op1:
+            return 0
+    return max(len(op1), len(op2))
+
+
+outputs1=readoutputs( sys.argv[1] )
+outputs2=readoutputs( sys.argv[2] )
+s=compareoutputs(outputs1, outputs2)
+if s==0:
+    sys.exit(0)
+else:
+    sys.exit(1)
+
+
+

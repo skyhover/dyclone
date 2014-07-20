@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# run the code chopper for all source code
+
+# Remember to set CILLY_DONT_COMPILE_AFTER_MERGE in ci/bin/cilly
+# Also, remember to run ./runonce before this script
+
+. `dirname $0`/config.sh
+
+cilcmd="$CILPATH/bin/cilly"
+# Must use "-save-temps" so that file name are consistent:
+#cilopt="--save-temps --domakeCFG --dofunchopper --local-RDs --local-liveness"
+cilopt="--save-temps --commPrintLnSparse --domakeCFG --dofunchopper --min-stmt-number=10 --compilable "
+srcopt=
+dstopt=
+
+if [ $# -eq 1 ]; then
+    srcopt=$1
+elif [ $# -eq 2 ]; then
+    srcopt=$1
+    dstopt=$2
+else
+    echo "Usage: $0 <srcdir> [dstdir]"
+    exit 1
+fi
+
+if [[ ! -d $srcopt ]]; then
+    echo "srcdir='$srcopt' is not valid."
+    exit 2
+fi
+
+LOGFILE=__dyc_`basename $0`.log
+LOGFILEFAIL=__dyc_`basename $0`.failed
+if [ "$dstopt" != "" ]; then
+    if ! [ -d $dstopt ]; then
+        echo "dstdir='$dstopt' is not valid."
+        exit 3
+    fi
+    dstopt=$(cd $dstopt; pwd)
+else
+    dstopt=`pwd`
+fi
+
+LOGFILE=$dstopt/$LOGFILE
+LOGFILEFAIL=$dstopt/$LOGFILEFAIL
+codeinfofile=$srcopt/__dyc_codeinfo
+
+echo -n "" > ${LOGFILE}
+echo -n "" > ${LOGFILEFAIL}
+
+cd $srcopt
+find . -name "*.cil.c" -size +0 | while read fn; do
+    echo -n ">>>>> '$fn' ...... " | tee -a ${LOGFILE}
+
+    if [ "$dstopt" = "" ]; then
+        echo $cilcmd $cilopt "${fn}"
+        $cilcmd $cilopt "${fn}"
+    else
+        echo $cilcmd $cilopt --store-directory="$dstopt" "${fn}"
+        $cilcmd $cilopt --store-directory="$dstopt" "${fn}"
+    fi
+    errcode=$?
+    if [ $errcode -ne 0 ]; then
+        echo "failed($errcode): $fn" >> ${LOGFILEFAIL}
+    fi
+
+    # save disk space: delete tmp files in the current dirtory:
+    tmpfn=`basename $fn`
+    # "--" means the end of command line options, so that file names starting with "-" will not be interpreted as options for "rm"
+    if [ "${tmpfn##*.}" == "c" ]; then
+        rm -- "${tmpfn%.c}.i" "${tmpfn%.c}.cil.c" "${tmpfn%.c}.cil.i"
+    else # assume .i suffix
+        rm -- "${tmpfn%.*}.cil.c" "${tmpfn%.*}.cil.i"
+    fi
+
+    echo "<<<<< '$fn'" | tee -a ${LOGFILE}
+done
+

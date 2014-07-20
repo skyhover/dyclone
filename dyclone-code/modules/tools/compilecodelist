@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# compare all the code trunks (.foo.c and .gen.c)
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+CC=gcc
+CCFLAGS="-O3 -I ${scriptdir}/../C/ ${scriptdir}/../C/libdyc.so"
+debug="true"
+
+
+if [[ $# -ne 1 && $# -ne 2 ]]; then
+    echo "Usage: $0 <src file list> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -f "$1" ]]; then
+    echo "Error: src file list '$1' invalid"
+    exit 65
+fi
+
+dstabspath=
+if [[ "$2" != "" ]]; then
+    if [[ ! -d "$2" ]]; then
+        echo "Error: dst dir '$2' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $2; pwd)
+    fi
+fi
+
+while read oneinput; do
+    oneinput=`echo $oneinput | cut -d'|' -f1`
+    footrunkname=${oneinput%.c}
+    gentrunkname=${oneinput%.foo.c}.gen
+    fooexename=${footrunkname}.exe    # the same location as the source code
+    genexename=${gentrunkname}.exe    # the same location as the source code
+    if [[ "$dstabspath" != "" ]]; then
+        # use the location provided by $2
+        fooexename=$dstabspath/`basename $footrunkname`.exe
+        genexename=$dstabspath/`basename $gentrunkname`.exe
+    fi
+    compilefoo=0
+    compilegen=0
+    if [[ ! -f "$fooexename" ]]; then
+        compilefoo=1
+    fi
+    if [[ ! -f "$genexename" ]]; then
+        compilegen=1
+    fi
+    if [[ $compilegen -eq 1 || $compilefoo -eq 1 ]]; then
+        genlinkfn=$(headerObjFile $oneinput)
+        if [[ $? -ne 0 ]]; then
+            continue
+        fi
+    fi
+    if [ $compilefoo -eq 1 ]; then
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: ${CC} -o $fooexename ${scriptdir}/../C/dycmain.o $oneinput $genlinkfn ${CCFLAGS}" 1>&2
+        fi
+        ${CC} -o "$fooexename" ${scriptdir}/../C/dycmain.o "$oneinput" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Compiling Failure: $oneinput" 1>&2
+        else
+            # save some disk space
+            strip $fooexename
+        fi
+    else
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: $fooexename exists already" 1>&2
+        fi
+    fi
+    if [ $compilegen -eq 1 ]; then
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: ${CC} -o $genexename ${gentrunkname}.c $genlinkfn ${CCFLAGS}" 1>&2
+        fi
+        ${CC} -o "$genexename" "${gentrunkname}.c" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Compiling Failure: ${gentrunkname}.c" 1>&2
+        else
+            strip $genexename
+        fi
+    else
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: $genexename exists already" 1>&2
+        fi
+    fi
+done < $1
+
+

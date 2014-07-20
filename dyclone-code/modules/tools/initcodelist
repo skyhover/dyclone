@@ -1,0 +1,58 @@
+#!/bin/bash
+
+if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "Usage: $0 <src dir> <dstlist> [number]"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+if [[ ! -d `dirname $2` ]]; then
+    echo "Error: dst dir for '$2' invalid"
+    exit 65
+fi
+if [[ -e "$2" ]]; then
+    echo "Error: file or directory '$2' already exists!"
+    exit 1
+fi
+
+scriptdir=$(cd `dirname $0`; pwd)
+abspath=$( cd $1; pwd )
+linklimit=2000
+ 
+
+if [ $# -eq 3 ]; then
+    if [ $3 -ge $linklimit ]; then
+        echo "Warning: are you sure about using '$3' code? It will be slow..."
+    fi
+    find "$abspath" -name "*.foo.rds" | head -n $3 | while read fn; do
+        fooc=${fn%.rds}.c
+        ins=${fn%.c}.ins
+        ins=`tail -n 1 $ins`
+        rds=$fn  #${fn%.c}.rds
+        rds=`tail -n 1 $rds`
+        echo "$fooc|$ins|$rds"
+    done > "$2"
+else
+    find "$abspath" -name "*.foo.rds" | while read fn; do
+        fooc=${fn%.rds}.c
+        ins=${fn%.rds}.ins
+        ins=`tail -n 1 $ins`
+        rds=$fn  #${fn%.c}.rds
+        rds=`tail -n 1 $rds`
+        echo "$fooc|$ins|$rds"
+    done > "$2"
+fi
+
+#$scriptdir/groupcodelist "$2" "$2"
+#i=1
+#while read l; do
+#    mkdir -p `dirname $2`/l$i/0/CLSRTT.0.0 && mv "$l" `dirname $2`/l$i/0/CLSRTT.0.0/L0
+#    i=$((i+1))
+#done < <( find `dirname $2` -name "`basename $2`\(*" )
+
+$scriptdir/sortcodelist "$2" > "$2.sorted"
+mv "$2.sorted" "$2"
+

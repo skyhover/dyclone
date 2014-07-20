@@ -1,0 +1,38 @@
+#!/usr/bin/python2.4
+
+import sys, os
+import clusterfiltering
+
+def main():
+    f = open(sys.argv[1])  # a file containing a list of L* file names
+    newlist = []
+    for c in f:
+        c = c.splitlines()
+        if len(c)<1:
+           continue
+        c = c[len(c)-1].split()
+        if len(c)<1:
+           continue
+        c = c[len(c)-1]
+        if not os.path.isfile(c):
+           print >> sys.stderr, "invalid L* file:", c
+           continue
+        ff = open(c)  # a L* file name
+        cluster = ff.readlines()
+        cluster = clusterfiltering.filter_one_cluster(cluster)
+        cluster.sort()
+        ff.close()
+        gg = open(os.path.join(os.path.dirname(c), "filtered_" + os.path.basename(c)), 'w')
+        for v in cluster:
+            print >> gg, v,
+        gg.close()
+        if len(cluster)>1:
+           newlist.append((len(cluster), c))
+    newlist.sort()
+    for nv in newlist:
+        print nv[0], nv[1]
+
+
+if __name__ == '__main__':
+   main()
+

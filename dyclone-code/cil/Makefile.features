@@ -1,0 +1,10 @@
+# -*- Mode: makefile -*-
+# This file was generated automatically by ./configure.in
+# We will not need this once configure supports multiline variables
+export USE_CFGBFS=yes
+export USE_CFGDFS=yes
+export USE_CODEINFO=yes
+export USE_FUNCHOPPER=yes
+export USE_STMTITER=yes
+TYPE_SIZE_T="unsigned long"
+TYPE_WCHAR_T="int"

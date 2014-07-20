@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# All directory names are absolute paths for easy handling
+
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $0 <codelist dir> <codelist prefix>" 1>&2
+    exit 65
+fi
+
+if [ ! -d "$1" ]; then
+    echo "Error: input directory '$1' invalid." 1>&2
+    exit 65
+fi
+
+rootdir=$( cd $1; pwd )
+
+LOGFILE=$rootdir/__dyc_log.`basename $0`
+LOGFAILED=$rootdir/__dyc_failed.`basename $0`
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFAILED
+
+groupcount=0
+cd $1
+while read cfn; do
+    if [ `head -n 2 "$cfn" | wc -l` -gt 1 ]; then
+        groupcount=$((groupcount+1))
+        inputi=`echo "$cfn" | sed "s/.*(\([[:digit:]]\+\)[,[:space:]]*\([[:digit:]]\+\))/_\1_\2/"`
+        echo "mkdir -p INPUT$groupcount$inputi/0/CLSRTT.0.0 && cp $cfn INPUT$groupcount$inputi/0/CLSRTT.0.0/L0"
+        mkdir -p INPUT$groupcount$inputi/0/CLSRTT.0.0
+        cp "$cfn" INPUT$groupcount$inputi/0/CLSRTT.0.0/L0
+    fi
+done < <( find . -maxdepth 1 -name "$2*" )
+
+if [ $groupcount -le 0 ]; then
+    echo "Oops, no code group files? Or not enough code trunks in each group?"
+    exit 1
+else
+    echo "Totally, $groupcount group files generated."
+    echo "Now, you may start whichever group you like, maybe on different machines:"
+    echo 
+    echo "   `dirname $0`/cluster_clustercodestart 100 $1/INPUT<id> 0"
+fi
+
+exit 0
+

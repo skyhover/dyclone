@@ -1,0 +1,26 @@
+CC=gcc
+CFLAGS=-O3
+
+all: libdyc.a
+
+inputformat.lex.c: inputformat.l
+	flex -oinputformat.lex.c inputformat.l
+
+inputformat.tab.c inputformat.tab.h: inputformat.y
+	bison -d inputformat.y
+
+inputformat.tab.o: inputformat.tab.c inputformat.tab.h inputformat.lex.c
+	${CC} ${CFLAGS} -c inputformat.tab.c
+
+randomvalues.o: randomvalues.c dycmain.h
+	${CC} ${CFLAGS} -c randomvalues.c
+
+dycmain.o: dycmain.c dycmain.h
+	${CC} ${CFLAGS} -c dycmain.c
+
+libdyc.a: inputformat.tab.o randomvalues.o dycmain.o
+	ar -rcsv libdyc.a inputformat.tab.o randomvalues.o
+
+clean:
+	rm *.o libdyc.a
+

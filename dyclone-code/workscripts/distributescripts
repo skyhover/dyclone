@@ -1,0 +1,16 @@
+#!/bin/bash
+
+dstdir=/state/partition1/bird/jlx/dyclone/dyclone
+#dstdir=/state/partition1/bird/jlx/dyclone/INPUT
+for i in `seq 0 36`; do
+    echo -n "copy scripts to compute-0-$i ..."
+    ssh compute-0-$i "mkdir -p $dstdir; cp -r /home/bird/jlx/dyclone/dyclone/modules $dstdir"
+    #ssh compute-0-$i "mkdir -p $dstdir"
+    if [ $? -ne 0 ]; then
+       echo " Failed."
+    else
+       echo " Done."
+    fi
+done
+
+

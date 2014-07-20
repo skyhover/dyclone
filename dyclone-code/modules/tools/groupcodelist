@@ -1,0 +1,44 @@
+#!/usr/bin/python
+
+# split a list of code files and sort each sublist, assuming file names are unique;
+# each input line is in the format: <filename>|junk|<num1>|<num2>|<num3>
+
+import sys, os
+import pyheaders
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage:", sys.argv[0], "<codelist> <outputfileprefix>"
+    sys.exit(1)
+
+def dumpfilelistgroup(k, fl, o=sys.stdout):
+    lc = 0
+    for f in fl:
+        lc += 1
+        for x in f:
+            print >> o, x,
+        print >> o
+    if lc<2:
+        print >> sys.stderr, "Warning:", k, "not enough code?"
+
+listgroups={}
+def listgrouping(filelist):
+    for f in filelist:
+        if len(f)==7:
+            key=(f[1],f[4])
+        else:
+            key=(f[1],0)
+        if key in listgroups:
+            listgroups[key].append(f)
+        else:
+            listgroups[key] = [f]
+
+filelist = pyheaders.readinfilelist(sys.argv[1])
+filelist = filter(pyheaders.filterfilelist, filelist)
+listgrouping(filelist)
+for k,l in listgroups.items():
+    l.sort(cmp=pyheaders.cmpfilelist)
+    f = open(sys.argv[2] + str(k), "w")
+    dumpfilelistgroup(k, l, f)
+    f.close()
+print >> sys.stderr, "Totally,", len(listgroups), "group files generated"
+

@@ -1,0 +1,158 @@
+#!/bin/bash
+
+# run the code chopper for all source code.
+# NOTE: we assume <srdir> doesn't violate EXT3_LINK_MAX, and <dstdir> mimics its structure, so we didn't use "infraplacement" in this script.
+# Update: the assumption may not be right. E.g. dib7000m_i2c_enumeration has more than 300 sequential stmts, leading to 45K*5 files in one directory...so we enabled infraplacement within the code chopper.
+
+# Remember to set CILLY_DONT_COMPILE_AFTER_MERGE in ci/bin/cilly
+# Also, remember to run ./runonce before this script (TODO: parallelize ./runonce, or not neccessary, finished in ~660m wallclock on elvis)
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/config.sh
+. $scriptdir/utils.sh
+
+cilcmd="$CILPATH/bin/cilly"
+# Must use "-save-temps" so that file name are consistent:
+#cilopt="--save-temps --domakeCFG --dofunchopper --local-RDs --local-liveness"
+cilopt="--save-temps --commPrintLnSparse --domakeCFG --dofunchopper --min-stmt-number=10 --stmt-stride=1 --deckard-vector " # --compilable "
+srcopt=
+dstopt=
+
+if [ $# -eq 2 ]; then
+    srcopt=$2
+elif [ $# -eq 3 ]; then
+    srcopt=$2
+    dstopt=$3
+else
+    echo "Usage: $0 <# cluster nodes> <srcdir> [dstdir]"
+    exit 1
+fi
+
+if [[ ! -d $srcopt ]]; then
+    echo "srcdir='$srcopt' is not valid."
+    exit 2
+fi
+
+if [ "$dstopt" != "" ]; then
+    if ! [ -d $dstopt ]; then
+        echo "dstdir='$dstopt' is not valid."
+        exit 3
+    fi
+    dstopt=$(cd $dstopt; pwd)
+else
+    dstopt=`pwd`
+fi
+# $dstopt is an absolute path now:
+LOGFILE=$dstopt/__dyc_`basename $0`.log
+LOGFILEFAIL=$dstopt/__dyc_`basename $0`.failed
+
+clusternodenumber=$1
+typeset -a scriptjobs
+
+# process the code info in $1 and separate the info for each file into different file
+# $1 - the src dir
+# $2 - the dst dir to store the final files (mimic the structure in src dir)
+processCodeInfo () {
+    local codeinfofile=$1/__dyc_codeinfo
+    local dstdir=
+    if [ "$2" == "" ]; then
+        dstdir=`pwd`
+    else
+        dstdir=$(cd $2; pwd)
+    fi
+    if ! [ -f $codeinfofile ]; then
+        echo "Warning: no __dyc_codeinfo file found in $1. Will process every function." | tee -a $LOGFILE
+        return 0
+    fi
+    # call a python script is easier:
+    $scriptdir/processcodeinfo $1 $codeinfofile $dstdir
+    if [ $? -ne 0 ]; then
+        echo "Error: processcodeinfo $1 $codeinfofile $dstdir" | tee -a $LOGFILEFAIL
+        return 1
+    fi
+    return 0
+}
+
+processCodeInfo $srcopt $dstopt
+if [ $? -ne 0 ]; then
+    echo "Error: processCodeInfo $srcopt $dstopt. Exit" | tee -a $LOGFILEFAIL
+    exit 1
+fi
+
+echo -n "" > ${LOGFILE}
+echo -n "" > ${LOGFILEFAIL}
+
+cd $srcopt
+# create one chopping job for each file
+jobnumber=0
+while read fn; do
+    # $dstopt should not be empty here, and
+    # For each file, save results in $dstopt/$file/$file.hd.c etc. to prevent reaching EXT3_LINK_MAX
+    jobdir=$dstopt/$fn  # it doesn't matter to have "./" at the beginning of $fn
+    mkdir -p $jobdir
+    jobdir=$(cd $jobdir; pwd) # normalize it
+    jobnumber=$((jobnumber+1))
+    jobname=$jobdir/sge_`basename $fn`.$jobnumber.sh  # add prefix to avoid digits at the beginning and easier to delete
+
+    # create the content of the job
+
+    echo "#!/bin/bash" > $jobname
+    echo "# cwd = `pwd`" >> $jobname
+    echo "#$ -cwd" >> $jobname
+    echo "#$ -o $jobname.o\$JOB_ID" >> $jobname
+    echo "#$ -e $jobname.e\$JOB_ID" >> $jobname
+    echo "#$ -S /bin/bash" >> $jobname
+
+    echo "echo -n \">>>>> '$fn' ...... \"" >> $jobname
+
+    paramfile=$jobdir/`basename $fn`.param
+    if [ -s $paramfile ]; then
+        echo "echo \"$cilcmd $cilopt --store-directory=$jobdir --fun-name-list=\\\"`cat $paramfile`\\\" ${fn}\"" >> $jobname
+        echo "$cilcmd $cilopt --store-directory=\"$jobdir\" --fun-name-list=\"`cat $paramfile`\" \"${fn}\"" >> $jobname
+    else
+        echo "echo \"$cilcmd $cilopt --store-directory=$jobdir ${fn}\"" >> $jobname
+        echo "$cilcmd $cilopt --store-directory=\"$jobdir\" \"${fn}\"" >> $jobname
+    fi
+    echo "errcode=\$?" >> $jobname
+    echo "if [ \$errcode -ne 0 ]; then" >> $jobname
+    echo "    echo \"failed(\$errcode): $fn\" 1>&2" >> $jobname
+    echo "fi" >> $jobname
+
+    # save disk space: delete tmp files in the current dirtory:
+    tmpfn=`basename $fn`
+    # "--" means the end of command line options, so that file names starting with "-" will not be interpreted as options for "rm"
+    if [ "${tmpfn##*.}" == "c" ]; then
+        echo "rm -f -- \"${tmpfn%.c}.i\" \"${tmpfn%.c}.cil.c\" \"${tmpfn%.c}.cil.i\"" >> $jobname
+    else # assume .i suffix
+        echo "rm -f -- \"${tmpfn%.*}.cil.c\" \"${tmpfn%.*}.cil.i\"" >> $jobname
+    fi
+
+    echo "echo \"<<<<< '$fn'\"" >> $jobname
+    echo "touch $jobname.done" >> $jobname
+
+    # don't submit too many jobs at once:
+    holdonSubmitJobs $clusternodenumber 15 | tee -a $LOGFILE
+    if [ $? -ne 0 ]; then
+        echo "Error on holdonSubmitJobs. Exit '$0' for safety." | tee -a $LOGFILEFAIL
+        exit 1
+    fi
+    jobid=`qsub $jobname` # try not to use the wall time limit: -l h_rt=01:00:00`
+    if [ $? -ne 0 ]; then
+        echo "Job submission failure: $jobname" | tee -a $LOGFILEFAIL
+    else
+        jobid=`echo $jobid | cut -d' ' -f3`
+        echo "Job ID $jobid ($jobname) submitted" | tee -a $LOGFILE
+        scriptjobs[$jobnumber]="$jobname.$jobid"
+    fi
+done < <(find . -name "*.cil.c" -size +0)
+
+waitforalljobs $jobnumber scriptjobs 30 | tee -a $LOGFILE
+if [ $? -ne 0 ]; then
+    echo "Error on waitforalljobs. Exiting $0 ..." | tee -a $LOGFILEFAIL
+else
+    echo "All CodeChopping Done" | tee -a $LOGFILE
+fi
+
+# save the accounting file
+cp $SGE_ROOT/$SGE_CELL/common/accounting $dstopt/__dyc_accounting.`basename $0`
+

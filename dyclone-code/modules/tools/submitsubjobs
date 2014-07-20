@@ -1,0 +1,94 @@
+#!/bin/bash
+
+# This script must be called on the master node due to certain realities.
+case $HOSTNAME in
+    elvis.cs.ucdavis.edu)
+        echo "Hostname valid. Continue."
+        ;;
+    *)
+        echo "Hostname $HOSTNAME invalid. Exit." 1>&2
+        exit 1
+        ;;
+esac
+
+
+# All directory names are absolute paths for easy handling
+
+if [[ $# -ne 3 ]]; then
+    echo "Usage: $0 <# cluster nodes> <root_of_INPUTs> <suffix>" 1>&2
+    exit 65
+fi
+
+if [ $1 -le 0 ]; then
+    echo "Error: invalide clusternodenumber '$1'" 1>&2
+    exit 65
+fi
+clusternodenumber=$1
+
+if [ ! -d "$2" ]; then
+    echo "Error: input directory '$2' invalid." 1>&2
+    exit 65
+fi
+rootdir=$( cd $2; pwd )
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+. $scriptdir/config.sh
+. $scriptdir/cluster_clustercode
+
+LOGFILE=$rootdir/__dyc_log.`basename $0`
+LOGFAILED=$rootdir/__dyc_failed.`basename $0`
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFAILED
+
+ls $rootdir/$metadatadir/sge*.done >& /dev/null
+ec=$?
+if [ $ec -ne 0 ]; then
+    echo "Error: no indication that the job for the cluster '$rootdir' is finished." | tee -a $LOGFAILED
+    exit 1
+fi
+
+typeset -a scriptjobs
+
+jobnumber=0
+while read fn; do
+    while read jobname; do
+        # a naive check to avoid jobs to be submitted again:
+        ls $jobname.* >& /dev/null
+        if [ $? -ne 0 ]; then  # the files not exist; so ok to submit
+            holdonSubmitJobs $clusternodenumber 4 | tee -a $LOGFILE
+            if [ $? -ne 0 ]; then
+                echo "Error on holdonSubmitJobs for $jobname. Skip it." | tee -a $LOGFAILED
+                continue
+            fi
+            jobid=`qsub $jobname`
+            if [ $? -ne 0 ]; then
+                echo "Job submission failure: $jobname" | tee -a $LOGFAILED
+            else
+                jobid=`echo $jobid | cut -d' ' -f3`
+                echo "Job ID $jobid ($jobname) submitted" | tee -a $LOGFILE
+                jobnumber=$((jobnumber+1))
+                scriptjobs[$jobnumber]="$jobname.$jobid"
+            fi
+        fi
+    done < $fn
+    mv $fn "$fn.done"
+done < <( ls $rootdir/$metadatadir/sge*.$3 )
+#done < <( find $rootdir -maxdepth 3 -name "sge*.$3" )
+
+if [ $jobnumber -gt 0 ]; then
+    echo "$jobnumber Subjobs Submitted. Waiting for them ...... " | tee -a $LOGFILE
+    waitforalljobs $jobnumber scriptjobs 4 | tee -a $LOGFILE
+    if [ $? -ne 0 ]; then
+        echo "Error on waitforalljobs. Exiting $0 ..." | tee -a $LOGFAILED
+    else
+        echo "$jobnumber Subjobs Done." | tee -a $LOGFILE
+    fi
+    # save the accounting file
+    cp $SGE_ROOT/$SGE_CELL/common/accounting $rootdir/__dyc_accounting.`basename $0`
+else
+    echo "No job found under $rootdir/$metadatadir/sge*.$3" | tee -a $LOGFAILED
+fi
+
+

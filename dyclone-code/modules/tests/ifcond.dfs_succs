@@ -1,0 +1,60 @@
+1  stmt id: 0
+   #line 4 "ifcond.c"
+   j = 0;
+#line 5
+   i += j;
+succs stmt ids: 1  
+2  stmt id: 1
+   #line 6
+   if (i == j) {
+     {
+#line 7
+     i = j * j;
+#line 8
+     printf((char const   * __restrict  )"then branch\n");
+#line 9
+     j = i * i;
+     }
+   } else {
+     {
+#line 11
+     printf((char const   * __restrict  )"else branch\n");
+     }
+   }
+succs stmt ids: 6  2  
+3  stmt id: 6
+   {
+#line 11
+   printf((char const   * __restrict  )"else branch\n");
+   }
+succs stmt ids: 7  
+4  stmt id: 7
+   #line 11
+   printf((char const   * __restrict  )"else branch\n");
+succs stmt ids: 8  
+5  stmt id: 8
+   #line 13
+   return (0);
+succs stmt ids: 
+6  stmt id: 2
+   {
+#line 7
+   i = j * j;
+#line 8
+   printf((char const   * __restrict  )"then branch\n");
+#line 9
+   j = i * i;
+   }
+succs stmt ids: 3  
+7  stmt id: 3
+   #line 7
+   i = j * j;
+succs stmt ids: 4  
+8  stmt id: 4
+   #line 8
+   printf((char const   * __restrict  )"then branch\n");
+succs stmt ids: 5  
+9  stmt id: 5
+   #line 9
+   j = i * i;
+succs stmt ids: 8  

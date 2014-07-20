@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# run the code chopper for all source code.
+# NOTE: we assume <srdir> doesn't violate EXT3_LINK_MAX, and <dstdir> mimics its structure, so we didn't use "infraplacement" in this script.
+# Update: the assumption may not be right. E.g. dib7000m_i2c_enumeration has more than 300 sequential stmts, leading to 45K*5 files in one directory...so we enabled infraplacement within the code chopper.
+
+# Remember to set CILLY_DONT_COMPILE_AFTER_MERGE in ci/bin/cilly
+# Also, remember to run ./runonce before this script (TODO: parallelize ./runonce, or not neccessary, finished in ~660m wallclock on elvis)
+
+scriptdir=$(cd `dirname $0`/../modules/tools; pwd)
+. $scriptdir/config.sh
+. $scriptdir/utils.sh
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <# cluster nodes> <cluster list file>"
+    exit 1
+fi
+
+if ! [ -f $2 ]; then
+   echo "Error: file '$2' not exist"
+   exit 1
+fi
+
+clusternodenumber=$1
+
+while read fn; do
+    # don't submit too many jobs at once:
+    holdonSubmitJobs $clusternodenumber 15
+    if [ $? -ne 0 ]; then
+        echo "Error on holdonSubmitJobs. Exit '$0' for safety."
+        exit 1
+    fi
+    echo "submitting $fn ...... "
+    if ! [ -f $fn ]; then
+        echo "Error: $fn not exist"
+    else
+	id=${fn%%_*}
+	id=${id##*INPUT}
+	if [ $id -eq 366 ]; then
+		continue
+	fi
+        $scriptdir/cluster_clustercodestart $1 "${fn%/0/CLSRTT.0.0/L0}" 0
+	sleep 1
+    fi
+done < $2
+
+

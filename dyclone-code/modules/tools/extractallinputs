@@ -1,0 +1,40 @@
+#!/usr/bin/python
+
+import sys, os
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], " <src_inputname> <storage dir>"
+    sys.exit(1)
+
+if not os.path.isfile(sys.argv[1]):
+    print >> sys.stderr, sys.argv[0], ": the input file invalid:", sys.argv[1]
+    sys.exit(1)
+if not os.path.isdir(sys.argv[2]):
+    print >> sys.stderr, sys.argv[0], ": the input storage dir invalid:", sys.argv[2]
+    sys.exit(1)
+
+#assume the input file has the correct format:
+inf = open(sys.argv[1], 'r')
+ins = None
+#for line in inf.readlines():
+for line in inf:
+    if line=='\n':
+        continue
+    if line[0]=='I': # a new input starts, save the previous one
+        if ins!=None:
+            ins.close()
+        ids = line.split()[0]  # should be unique
+        ins = open(os.path.join(sys.argv[2],ids), 'w')
+    else:
+        if ins!=None:
+            print >> ins, line,
+
+inf.close()
+
+if ins!=None:  # at least one input
+    ins.close()
+    sys.exit(0)
+else:
+    sys.exit(1)
+
+

@@ -1,0 +1,70 @@
+#!/usr/bin/python
+
+# calculate the similarity between two output files.
+# assume each line in each output file is an output value.
+
+import sys
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], "<output1> <output2>"
+    print >> sys.stderr, "Return: the similarity between the two"
+    sys.exit(1)
+
+if not os.path.isfile(sys.argv[1]):
+    print >> sys.stderr, sys.argv[0], ": the first output dir invalid:", sys.argv[1]
+    sys.exit(1)
+if not os.path.isfile(sys.argv[2]):
+    print >> sys.stderr, sys.argv[0], ": the second output dir invalid:", sys.argv[2]
+    sys.exit(1)
+
+def readoutputs (file):
+    f = open(file, 'r')
+    outputs={}
+    #for line in f.readlines():
+    for line in f:
+        if line=='\n':
+            continue
+        if line not in outputs:
+            outputs[line]=1
+        else:
+            outputs[line]+=1
+    f.close()
+    return outputs
+
+def outputnumber(outputs):
+    n=0
+    for o in outputs.values():
+        n+=o
+    return n
+
+def interoutputs(op1, op2):
+    outputs={}
+    for k in op1.keys():
+        if k in op2:
+            outputs[k]=min(op1[k], op2[k])
+    return outputs
+
+def outputsimilarity(op1, op2):
+    size1=outputnumber(op1)
+    size2=outputnumber(op2)
+    outputs={}
+    if size1<size2:
+        outputs=interoutputs(op1, op2)
+    else:
+        outputs=interoutputs(op2, op1)
+    intersize=outputnumber(outputs)
+    if size1+size2 == 0:
+        return 1
+    else:
+        return 2.*intersize / (size1+size2)
+
+def sizesimilarity(s1, s2, inters):
+    if s1+s2 == 0:
+        return 1
+    else:
+        return 2.*inters / (s1+s2)
+
+outputs1=readoutputs( sys.argv[1] )
+outputs2=readoutputs( sys.argv[2] )
+print outputsimilarity(outputs1, outputs2)
+

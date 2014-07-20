@@ -1,0 +1,21 @@
+#!/usr/bin/python
+
+import sys
+import random
+
+if len(sys.argv) != 3:
+    print >> sys.stderr, "Usage: ", sys.argv[0], " <src_inputname> <dst_inputname>"
+    sys.exit(1)
+
+#assume the input file has the correct format:
+inf = open(sys.argv[1], 'r')
+outf = open(sys.argv[2], 'w')
+
+lines = inf.readlines()
+inf.close()
+
+random.shuffle(lines) #in-place shuffle
+for line in lines:
+    print >> outf, line,
+outf.close()
+

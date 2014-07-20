@@ -1,0 +1,66 @@
+#!/bin/bash
+
+if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "Usage: $0 <src dir> <dst dir> [number]"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+if [[ ! -d "$2" ]]; then
+    echo "Error: dst dir '$2' invalid"
+    exit 65
+fi
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+abspath=$( cd $1; pwd )
+linklimit=2000
+linkcounttot=0
+linkcountcur=0
+
+cd $2
+if [ $# -eq 3 ]; then
+    if [ $3 -ge $linklimit ]; then
+        echo "Warning: I'll try with \$3=$3, but please remember to use infraplacement and clusters!"
+    fi
+    while read fn; do
+        if [ $linkcountcur -ge $linklimit ]; then
+            echo -n "reinfraplacement . DIRRTT $linklimit $linklimit ..."
+            reinfraplacement . DIRRTT $linklimit $linklimit
+            if [ $? -ne 0 ]; then
+                echo "reinfraplacement failed."
+            else
+                echo " done."
+            fi
+            linkcountcur=0
+        fi
+        linkcounttot=$((linkcounttot+1))
+        linkcountcur=$((linkcountcur+1))
+        trunkbase=`basename $fn`
+        ln -s $fn $trunkbase
+    done < <( find "$abspath" -name "*.foo.c" | head -n $3 )
+else
+    while read fn; do
+        if [ $linkcountcur -ge $linklimit ]; then
+            echo -n "reinfraplacement . DIRRTT $linklimit $linklimit ..."
+            reinfraplacement . DIRRTT $linklimit $linklimit
+            if [ $? -ne 0 ]; then
+                echo "reinfraplacement failed."
+            else
+                echo " done."
+            fi
+            linkcountcur=0
+        fi
+        linkcounttot=$((linkcounttot+1))
+        linkcountcur=$((linkcountcur+1))
+        trunkbase=`basename $fn`
+        ln -s $fn $trunkbase
+    done < <( find "$abspath" -name "*.foo.c" )
+fi
+
+exit 0
+

@@ -1,0 +1,55 @@
+= Dependencies
+
+ocaml
+perl
+autoconf
+automake
+make
+ncurses-dev
+str -> ocamlstr (cf. http://caml.inria.fr/mantis/view.php?id=5247)
+if error message says "cannot foudn -lstr".
+cf. http://church.cs.virginia.edu/genprog/index.php/FAQ#I_get_the_error:_cil_file_.22is_not_a_compiled_interface.22._What_do_I_do.3F
+
+= Build the code chopper and trunk wrapper
+
+./configure EXTRASRCDIRS=../modules EXTRAFEATURES="cfgbfs cfgdfs codeinfo funchopper stmtiter"
+
+make // get error 
+e2:
+The extension of the output file must be .o or .so
+CIL 1.3.6 does not appear to build under the most 
+recent version of OCaml (3.11.2) on x86 Linux (or Mac OS X).  Thus, neither does the 
+modified version of CIL 1.3.6 distributed with CREST.
+
+CIL 1.3.7 appears to build correctly.  I will upgrade the version of
+ CIL distributed with CREST to 1.3.7.
+
+(In the meantime, you may be able to use an older version of OCaml as a 
+workaround.  OCaml 3.10.2 works on my system.)
+cf. https://code.google.com/p/crest/issues/detail?id=3
+
+--------------
+how to install an older version 3.09 ocaml in cygwin? 
+try OPAM
+ -- install OPAM from source first
+ -- get dependency: patch, gawk, m4, curl or wget, ocaml (need bootstrap!), ncurses, etc.
+ -- version 1.1.1 seems broke on curl; have to uninstall/remove curl for force opam to use wget
+ -- opam switch list shows ealiest 3.11.2; cannot auto switch to ocaml 3.09
+    --- may try since the url for downloading is in a uniform: http://caml.inria.fr/pub/distrib/ocaml-3.09
+    --- Error: Cannot guess host type
+        ---- possibly downlaoding binaries?
+        ---- set "-host" "x86_64-unknown-cygwin" in ~/.opam/compilers/3.09/3.09.comp file
+           ----- Error: have the same 'setmode' issue
+
+may have trouble install ocaml 4.01.0 from source on 64bit cygwin, due to unfound symbol 'setmode' during compilation!
+  --- http://cygwin.com/ml/cygwin-patches/2013-q1/msg00043.html
+  --- may have to patch ocaml sources/headers, or gnulib somewhere
+  --- may use cygwin 32 bit instead. 
+     ---- can have both 32 and 64 bit Cygwin installed.
+          c.f. https://cygwin.com/ml/cygwin/2014-04/msg00584.html
+          c.f. http://stackoverflow.com/questions/18329233/is-it-advisable-to-switch-from-cygwin-32bit-to-cygwin-64bit
+
+Or use WODI, should work under cygwin-64, but not sure whether support older versions of ocaml
+ 
+
+= Run the code chopper and trunk wrapper

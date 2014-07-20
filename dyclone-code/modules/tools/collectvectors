@@ -1,0 +1,33 @@
+#!/bin/bash
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <codelist> <dstfile>"
+    exit 65
+fi
+
+if ! [ -f $1 ]; then
+    echo "Error: code list '$1' invalid"
+    exit 1
+fi
+
+if [ -e $2 ]; then
+    echo "Error: dst file '$2' exists already"
+    exit 1
+fi
+
+echo -n "" > $2
+cc=0
+while read fn; do
+    fn=`echo $fn | cut -d'|' -f1`
+    fn=${fn%.c}.vec
+    if ! [ -f "$fn" ]; then
+        echo "Warning: vec file '$fn' invalid. Skip it."
+        continue
+    else
+        cat "$fn" >> $2
+        cc=$((cc+1))
+    fi
+done < $1
+
+echo "Done. $cc vectors are stored into $2"
+

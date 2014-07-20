@@ -1,0 +1,45 @@
+#!/usr/bin/python2.4
+
+#no 64-bit psyco yet...03/11/07
+#import psyco
+#psyco.full()
+
+import sys, os
+
+import re
+linesreg = re.compile("(.*)_(\d+)-(\d+)_(\d+)-(\d+)\.foo\.c.*")
+
+
+f= open(sys.argv[1])  # a list of trunk names
+
+fileCoverSet={}
+
+for line in f:
+    line = line.splitlines()
+    if len(line)<1:
+       continue
+    line = line[len(line)-1]
+    line = line.split()
+    if len(line)<1:
+       continue
+    line = line[len(line)-1]
+    m = linesreg.match(line)
+    if m != None:
+       funname = m.group(1)
+       l1 = int(m.group(2))
+       b1 = int(m.group(3))
+       l2 = int(m.group(4))
+       b2 = int(m.group(5))
+       if funname not in fileCoverSet: # this may not be right...the overlapping across different clusters are not taken into account...TODO
+          fileCoverSet[funname] = set()
+       fileCoverSet[funname].update(range(min(l1,l2), max(l1,l2)+1))
+
+f.close()
+
+sum = 0
+for file,coverset in fileCoverSet.items():
+    #print file,',',coverset
+    sum += len(coverset)
+
+print "LoC:", sum
+

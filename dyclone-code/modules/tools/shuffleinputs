@@ -1,0 +1,61 @@
+#!/usr/bin/python
+
+import sys
+import random
+
+if len(sys.argv) != 6:
+    print >> sys.stderr, "Usage: ", sys.argv[0], " <src_inputname> <# of num> <# of ptr> <dst_inputfile> <inputid>"
+    sys.exit(1)
+
+def countNum(lines):
+    cn = 0
+    cp = 0
+    for line in lines:
+        if line == '\n' or line == '':
+            continue
+        if line[0]=='p':
+            cp += 1
+        else:
+            cn += 1
+    return (cn,cp)
+
+def factorial(n):
+    return reduce(lambda x,y:x*y,range(1,n+1), 1)
+
+#assume the input file has the correct format:
+inf = open(sys.argv[1], 'r')
+
+lines = inf.readlines()
+inf.close()
+
+cc = countNum(lines)
+cn = int(sys.argv[2])
+cp = int(sys.argv[3])
+if cn>cc[0]:
+    for i in range(cn-cc[0]):
+        lines.append("0\n")
+if cp>cc[1]:
+    for i in range(cp-cc[1]):
+        lines.append("p0\n")
+
+# NOTE: shuffle n! times is simpler than counting all possible permutations,
+# but may cause duplication or missed ones (depends on the random number generator)
+maxForPermute = 5
+# since we are intend to treat files with different numbers of in-vars as different code, it is more time-saving to use a smaller number for shuffling:
+permutenum = max(0, min(cn+cp, len(lines)))
+if permutenum>maxForPermute:
+    print >> sys.stderr, sys.argv[0], "warning: too many inputs, only shuffle %d! times" % (maxForPermute)
+    permutenum = factorial(maxForPermute)
+else:
+    permutenum = factorial(permutenum)
+
+outf = open(sys.argv[4], 'w')
+for i in range(permutenum):
+    random.shuffle(lines) #in-place shuffle
+    print >> outf, "I%s.%d" % (sys.argv[5], i)
+    for line in lines:
+        print >> outf, line,
+outf.close()
+
+sys.exit(0)
+

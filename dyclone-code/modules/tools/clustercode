@@ -1,0 +1,934 @@
+#!/bin/bash
+
+# NOTE for bash:
+# - use "local" to define local variables in functions explicitly, otherwise, it is global;
+#   "local" variables shadow global ones with the same names.
+# - "return" is intended for exit status (from 0 to 255), an alternative is to use global;
+#   or use stdout and command substitution; or use disk, etc. to pass values back.
+# - "exit " only terminates the current shell process; it does not terminate parent processes;
+
+# All directory names are absolute paths for easy handling
+
+scriptdir=$(cd `dirname $0`; pwd)
+. $scriptdir/utils.sh
+
+startid=0
+rootdir=INPUT
+metadatadir=CLSRTT.0.0
+linklimit=2000
+LOGFILE=__dyc_log.`basename $0`
+LOGFAILED=__dyc_failed.`basename $0`
+TIMEFILE=__dyc_time.`basename $0`
+timing=1
+overlaplimit=100
+
+CC=gcc
+CCFLAGS="-O3 -I ${scriptdir}/../C/ ${scriptdir}/../C/libdyc.so"
+debug="true"
+
+# Convention for file names:
+# - all input files are stored directly under INPUT/ -> not good for parallel running,
+#   so, put each input file into its cluster.
+# - each input file is named as the letter 'I' plus a unique number;
+# - each cluster is stored under a directory named as a unique number;
+# - each cluster contains a list file ('L' plus the cluster ID) which contains all the filenames (abs. names) of the code that belong to this cluster;
+# - each cluster contains a file that lists its representative(s); each row is an .c file name (not a link).
+#   - The file has the name as: the letter 'C' plus the unique number for the cluster;
+#   - Only one row in the file seems enough if we use query-style for clone detection;
+#   - Clustering results may be different, depending on which files are the representatives.
+#     E.g. three codes: x/y, x*y/4, y-x, may or may not be clustered together.
+#   - for similarity < 1.0, we intend to use the representatives as query points in Deckard
+#   - the representative(s) decides which .ins and which .out files to use;
+# - each cluster contains a "H..." file, listing the relative paths to its subclusters.
+# - To avoid infraplacement for these meta-data files, put them in DIRRTT.0.0/
+
+# Input file format:
+# - all (non-pointer) data are treated as 'signed char' of the range [-128, 127];
+#   Update: changed to [0, 255]
+# - each data is a number in the file if it is not zero;
+# - a pointer is NULL if it is not in the file, and non-NULL if a 'p' is in the file;
+# - TODO: can each input be permuted just once for all code in a cluster?
+#   what if their .ins files contain different numbers of in-vars? (less is fine; if more, we need to add "0" into the permutation)
+#   would this mean we should choose the .ins with the most number of in-vars? --> probably ok if we limit to 7! permutations anyway.
+#   Update: yes, implementing it
+
+# .ins file format:
+# - for sort: based on No. of number types then No. of pointers.
+# - need to make the calculation of the above numbers easy.
+
+# where to store outputs for a code trunk so that we won't hve race conditions?
+
+
+# calculate the depth of an input directory
+# parameter:
+# $1 - the *full* path of a cluster
+inputdepth ()
+{
+    local abspath=$(cd $1; pwd) # normalize the pathname first
+    abspath=${abspath##$rootdir}
+    echo $abspath | awk 'BEGIN{FS="/"} {print NF}' # return via stdout
+}
+
+MAXDEPTH=10
+# Given an input directory, to see whether we should stop
+# parameter:
+# $1 - the *full* path of a cluster
+oktoterminate ()
+{
+    local nf=`cat $1/$metadatadir/L* | wc -l`
+    if [ $nf -le 1 ]; then
+        return 1  # only one file in the cluster, stop
+    fi
+
+    # Opt 3: combine the Opt 1 and 2.
+    # Opt 1: based on the depth of an input; seems a lot of waste according to the exp on 100 files
+    local currentdepth=$( inputdepth $1 )
+    if [ $currentdepth -lt $MAXDEPTH ]; then
+        return 0 # to continue
+    else
+        # reach the limit, check Opt 2
+        # Opt 2: based on the changes for an input; may introduce more false positives than Opt 1, due to our similarity definition
+        ##local nc=`find $1/.. -maxdepth 1 -name "[[:digit:]]*" | wc -l`
+        local nc=`cat $1/../$metadatadir/H* | wc -l`
+        if [ $nc -gt 1 ]; then
+            return 0 # still have changes, to continue
+        else
+            return 1 # no more changes, to stop 
+        fi
+    fi
+}
+
+# check whether two code files overlap more than a threshold
+# $1 - code file 1
+# $2 - code file 2
+# $3 - threshold (default 50%)
+# return 0 if overlap; otherwise 1
+isoverlap ()
+{
+    local threshold=50
+    if ! [ -f $1 ]; then
+        echo "Error: isoverlap: '$1' doesn't exist." | tee -a $LOGFAILED
+        return 1
+    fi
+    if ! [ -f $2 ]; then
+        echo "Error: isoverlap: '$2' doesn't exist." | tee -a $LOGFAILED
+        return 1
+    fi
+    if [ "$3" != "" ]; then
+        threshold=$3
+    fi
+    if [ "`dirname $1`" != "`dirname $2`" ]; then
+        return 1
+    fi
+    local codefile1=`basename $1`
+    local codefile2=`basename $2`
+    if [ "$codefile1" == "$codefile2" ]; then 
+        return 0
+    fi
+    codefile1=${codefile1%%.*}
+    local ebyte1=${codefile1##*-}
+    codefile1=${codefile1%-$ebyte1}
+    local eline1=${codefile1##*_}
+    codefile1=${codefile1%_$eline1}
+    local sbyte1=${codefile1##*-}
+    codefile1=${codefile1%-$sbyte1}
+    local sline1=${codefile1##*_}
+    codefile1=${codefile1%_$sline1}
+    codefile2=${codefile2%%.*}
+    local ebyte2=${codefile2##*-}
+    codefile2=${codefile2%-$ebyte2}
+    local eline2=${codefile2##*_}
+    codefile2=${codefile2%_$eline2}
+    local sbyte2=${codefile2##*-}
+    codefile2=${codefile2%-$sbyte2}
+    local sline2=${codefile2##*_}
+    codefile2=${codefile2%_$sline2}
+    if [ "$codefile1" != "$codefile2" ]; then
+        return 1
+    fi
+    # due to CIL's transformation (e.g., for loops), $sbyte1>$ebyte1 is possible
+    if [ $sbyte1 -gt $ebyte1 ]; then
+        local tmp=$sbyte1
+        sbyte1=$ebyte1
+        ebyte1=$tmp
+    fi
+    if [ $sbyte2 -gt $ebyte2 ]; then
+        local tmp=$sbyte2
+        sbyte2=$ebyte2
+        ebyte2=$tmp
+    fi
+
+    # compare:
+    # Opt 2: overlap>$overlaplimit or contained>$overlaplimit then true
+    if [[ $sbyte1 -ge $sbyte2 && $sbyte1 -le $ebyte2 ]]; then
+        if [ $ebyte1 -le $ebyte2 ]; then
+            local overlapped=`expr \( $ebyte1 - $sbyte1 \) \* 100`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        else
+            local overlapped=`expr \( $ebyte2 - $sbyte1 \) \* 100`
+            local total1=`expr $threshold \* \( $ebyte1 - $sbyte1 \)`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total1 && $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    elif [[ $ebyte1 -ge $sbyte2 && $ebyte1 -le $ebyte2 ]]; then
+        if [ $sbyte1 -ge $sbyte2 ]; then
+            local overlapped=`expr \( $ebyte1 - $sbyte1 \) \* 100`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        else
+            local overlapped=`expr \( $ebyte1 - $sbyte2 \) \* 100`
+            local total1=`expr $threshold \* \( $ebyte1 - $sbyte1 \)`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total1 && $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    fi
+    return 1
+    # Opt 1: overlap>$overlaplimit or contained then true
+    if [[ $sbyte1 -ge $sbyte2 && $sbyte1 -le $ebyte2 ]]; then
+        if [ $ebyte1 -le $ebyte2 ]; then
+            return 0
+        else
+            local overlapped=`expr \( $ebyte2 - $sbyte1 \) \* 100`
+            local total1=`expr $threshold \* \( $ebyte1 - $sbyte1 \)`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total1 || $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    elif [[ $ebyte1 -ge $sbyte2 && $ebyte1 -le $ebyte2 ]]; then
+        if [ $sbyte1 -ge $sbyte2 ]; then
+            return 0
+        else
+            local overlapped=`expr \( $ebyte1 - $sbyte2 \) \* 100`
+            local total1=`expr $threshold \* \( $ebyte1 - $sbyte1 \)`
+            local total2=`expr $threshold \* \( $ebyte2 - $sbyte2 \)`
+            if [[ $overlapped -ge $total1 || $overlapped -ge $total2 ]]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    fi
+}
+
+
+# For each input, the distance between two outputs allowed
+stepsimlimit="1.0"
+
+# move the code into a new subcluster unconditionally
+# parameters:
+# $1 - the current cluster directory
+# $2 - the full name of the code trunk
+# $3 - the next available unique id for input/cluster
+movecodetoanewcluster ()
+{
+    if [[ "$debug" == "true" ]]; then
+        echo "ClusterCode: movecodetoanewcluster $1 $2 $3" | tee -a $LOGFILE
+    fi
+
+    if ! [ -d $1 ]; then
+        echo "Error: movecodetoanewcluster: cluster '$1' not exist" | tee -a $LOGFAILED
+        return 65
+    fi
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: movecodetoanewcluster: no id assigned for the input" | tee -a $LOGFAILED
+        return 65
+    fi
+    local codefile=$2
+    if [ ! -f "$codefile" ]; then
+        echo "Error: movecodetoanewcluster: '$codefile' invalid" | tee -a $LOGFAILED
+        return 65
+    fi
+    local spareid=$3
+    if [[ "$spareid" == "" || $spareid -le $currentid ]]; then
+        echo "Error: movecodetoanewcluster: next id '$spareid' invalid. Current id $currentid" | tee -a $LOGFAILED
+        return 65
+    fi
+
+    mkdir -p $1/$spareid/$metadatadir
+    # add a new entry in the "H" file for the current cluster
+    echo "$spareid" >> $1/$metadatadir/H$currentid
+    # use this code trunk as the representative for the new cluster
+    echo $codefile > "$1/$spareid/$metadatadir/C$spareid"
+    # add this file into the file list of the new cluster
+    echo $codefile > "$1/$spareid/$metadatadir/L$spareid"
+    spareid=`expr $spareid + 1`
+    echo $spareid > $1/$metadatadir/nextid
+}
+
+
+# parameters:
+# $1 - .c file
+# $2 - the cluster directory
+# $3 - the current cluster/input ID
+generaterandomvalues ()
+{
+    if [[ "$debug" == "true" ]]; then
+        echo "ClusterCode: generaterandomvalues $1 $2 $3" | tee -a $LOGFILE
+    fi
+
+    local codefile=$1
+    local genexe=${codefile%.foo.c}.gen.exe
+    if [[ ! -f "$genexe" ]]; then
+        local genlinkfn=$(headerObjFile $codefile)
+        if [[ $? -ne 0 ]]; then
+          echo "Error: in generaterandomvalues: headerObjFile $codefile" | tee -a $LOGFAILED
+          return 1
+        fi
+        if [ "$debug" == "true" ]; then
+            echo "generaterandomvalues: ${CC} -o $genexe ${codefile%.foo.c}.gen.c $genlinkfn ${CCFLAGS}" | tee -a $LOGFILE
+        fi
+        ${CC} -o "$genexe" "${codefile%.foo.c}.gen.c" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [ $? -ne 0 ]; then
+          echo "Error: in generaterandomvalues: Compiling failure: $1" | tee -a $LOGFAILED
+          return 1
+        fi
+    fi
+    # store the generated input
+    local ec=0
+    local pidtokill=
+    local killerpid=
+    $genexe > "$2/I$3" &
+    pidtokill=$!
+    waittokillpid $pidtokill 4 >& /dev/null &
+    killerpid=$!
+    wait $pidtokill || ec=$?  # may not work correctly if $pidtokill is the same as an old, finished process.
+    # leave the killer there in case 'wait' didn't work (the killer will exit itself when the pid to be killed no longer exist): kill $killerpid >& /dev/null &
+    if [ $ec -ne 0 ]; then
+        echo "Error: generaterandomvalues, $genexe failure" | tee -a $LOGFAILED
+    fi
+    return $ec
+}
+
+# Find the "smallest" .ins file in a cluster
+# $1 - the cluster directory
+smallestins ()
+{
+    local smallfn="__dummy_empty_file"
+    local smallcc="300|200|100" # set to large numbers
+    while read cfile; do
+        cfile=`echo $cfile | cut -d' ' -f1`
+        local insfn=${cfile%.c}.ins  
+        local inscc=$( tail -n 1 $insfn | awk 'BEGIN{FS="|"} {printf("%d|%d|%d", $2, $3, $4)}' )
+        # TODO: may have finer-grained comparison
+        local comp=$( echo "${smallcc}|${inscc}" | awk 'BEGIN{FS="|"} {if($2<$5)print 0; else if ($2>$5)print 1; else if($3<=$6) print 0; else print 1;}' )
+        if [ $comp -eq 1 ]; then
+            smallcc=$inscc
+            smallfn=$insfn
+        fi
+    done < $1/$metadatadir/L`basename $1`
+    if [ $smallfn == "__dummy_empty_file" ]; then
+        return 1
+    else
+        echo $smallfn
+        return 0
+    fi
+}
+
+# Find the "largest" .ins file in a cluster
+# parameter
+# $1 - the absolute path of a cluster
+largestins ()
+{
+    local largefn="__dummy_empty_file"
+    local largecc="0|0|0" # set to small numbers
+    while read cfile; do
+        cfile=`echo $cfile | cut -d' ' -f1`
+        local insfn=${cfile%.c}.ins  
+        local inscc=$( tail -n 1 $insfn | awk 'BEGIN{FS="|"} {printf("%d|%d|%d", $2, $3, $4)}' )
+        # TODO: may have finer-grained comparison
+        local comp=$( echo "${largecc}|${inscc}" | awk 'BEGIN{FS="|"} {if($2>$5)print 0; else if ($2<$5)print 1; else if($3>=$6) print 0; else print 1;}' )
+        if [ $comp -eq 1 ]; then
+            largecc=$inscc
+            largefn=$insfn
+        fi
+    done < $1/$metadatadir/L`basename $1`
+    if [ $largefn == "__dummy_empty_file" ]; then
+        return 1
+    else
+        echo $largefn
+        return 0
+    fi
+}
+
+# return the representative .ins file name for a cluster.
+# set the representative if not exist yet.
+# parameter
+# $1 - the absolute path of a cluster
+getrepresentative ()
+{
+    local currentid=`basename $1`
+    local repcodefn=$(head -n 1 $1/$metadatadir/C$currentid)
+    local log=
+    if [[ "$repcodefn" == "" ]]; then
+        #no representative yet, set it:
+        repcodefn=`head -n 1 $1/$metadatadir/L$currentid | cut -d' ' -f1`  # assume the sorted code list exists and file names do not contain ' '
+        if [[ "$repcodefn" == "" ]]; then
+            log="Warning: getrepresentative: Can't set cluster representatives: $1. Have you initialized the sorted code list yet?"
+            echo $log 1>&2
+            echo $log >> $LOGFAILED
+            return 1
+        else
+            echo "$repcodefn" > $1/$metadatadir/C$currentid
+            echo "$repcodefn" # use this as a "return" value
+            return 0
+        fi
+    elif [[ ! -f "$repcodefn" ]]; then  # check validity and return
+        log="Error: getrepresentative: file content invalid: $1/$metadatadir/C$currentid"
+        echo $log 1>&2
+        echo $log >> $LOGFAILED
+        return 1
+    else
+        echo "$repcodefn"
+        return 0
+    fi
+}
+
+# generate a set of permuted inputs based on one input and a .ins file
+# parameters:
+# $1 - the cluster directory (containing one input file $1/$metadatadir/I$currentid)
+# $2 - a .ins file
+# $3 - storage file for the generated inputs
+# Update: since we use the code with the most in-vars as representatives, it seems ok to permuteinputs only once for each cluster, not for each code
+# Update - put all permuted inputs into one file to save disk space.
+#     Format: a separator (I$id)
+permuteinputs ()
+{
+    if ! [ -d $1 ]; then
+        echo "Error: permuteinputs: invalid cluster '$1'" | tee -a $LOGFAILED
+        return 65
+    fi
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: permuteinputs: no id assigned for the input" | tee -a $LOGFAILED
+        return 65
+    fi
+    local insfn=$2
+    local inscc=$( tail -n 1 $insfn | awk 'BEGIN{FS="|"} {printf("%d", $2)}' )
+    local inscn=$( tail -n 1 $insfn | awk 'BEGIN{FS="|"} {printf("%d", $3)}' )
+    local inscp=$( tail -n 1 $insfn | awk 'BEGIN{FS="|"} {printf("%d", $4)}' )
+    #$scriptdir/permuteinputlines $1 $3/I$currentid.$someid
+    if [[ "$debug" == "true" ]]; then
+      echo "$scriptdir/shuffleinputs $1/$metadatadir/I$currentid $inscn $inscp $3 $currentid" | tee -a $LOGFILE
+    fi
+    $scriptdir/shuffleinputs $1/$metadatadir/I$currentid $inscn $inscp $3 $currentid
+    return $?
+}
+
+# compile a file and execute it
+# parameters:
+# $1 - the current cluster directory
+# $2 - the code file name
+# $3 - the input directory (containing all the permuted inputs)
+# $4 - the output storage file (default: $1/$metadatadir/out)
+executecode()
+{
+    if [ "$debug" == "true" ]; then
+        echo "ClusterCode: executecode $1 $2 $3 $4" | tee -a $LOGFILE
+    fi
+
+    if ! [ -d $1 ]; then
+        echo "Error: executecode: invalid cluster '$1'" | tee -a $LOGFAILED
+        return 65
+    fi
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: executecode: no id assigned for the input" | tee -a $LOGFAILED
+        return 65
+    fi
+    local codefile=$2
+    if ! [ -f "$2" ]; then
+        echo "Error: executecode: code trunk '$2' invalid" | tee -a $LOGFAILED
+        return 65
+    fi
+    if ! [ -d $3 ]; then
+        echo "Error: executecode: input directory invalid '$3'" | tee -a $LOGFAILED
+        return 65
+    fi
+
+    # Compilation: may be done separately to improve the degree of parallelization.
+    local exefile=${codefile%.c}.exe
+    if [[ ! -f "$exefile" ]]; then
+        local genlinkfn=$(headerObjFile $codefile)
+        if [[ $? -ne 0 ]]; then
+            echo "Error: executecode: headerObjFile $codefile" | tee -a $LOGFAILED
+            return 1
+        fi
+        if [[ "$debug" == "true" ]]; then
+            echo "executecode: ${CC} -o $exefile ${scriptdir}/../C/dycmain.o $codefile $genlinkfn ${CCFLAGS}" | tee -a $LOGFILE
+        fi
+        ${CC} -o "$exefile" ${scriptdir}/../C/dycmain.o "$codefile" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: executecode: Compiling failure: $2" | tee -a $LOGFAILED
+            return 1
+        fi
+    fi
+
+    # create and clean the directory for storing outputs
+    local outputsfile=$1/$metadatadir/out
+    if [ "$4" != "" ]; then
+        echo "Warning: executecode: not supported output storage" | tee -a $LOGFAILED
+    fi
+    if [[ "$debug" == "true" ]]; then
+        echo "ClusterCode: Create and clean output storage: $outputdir" | tee -a $LOGFILE
+    fi
+    echo -n "" > $outputsfile
+
+    # execute $2 with every input in $3.
+    local ii=0
+    # prepare to kill an execution if it runs too long
+    local pidtokill=
+    local killerpid=
+    local ec=
+    # too slow to extract every time: while ($scriptdir/extractinput $3 $currentid $ii > $3.itmp); do
+    while read oneinput; do
+        if [[ "$debug" == "true" ]]; then
+            #echo "executecode: $exefile $3/I$currentid.$ii >> $outputsfile" | tee -a $LOGFILE
+            echo "executecode: $exefile $oneinput >> $outputsfile" | tee -a $LOGFILE
+        fi
+        $exefile "$oneinput" > "$outputsfile.otmp" &
+        pidtokill=$!
+        waittokillpid $pidtokill 500000 >& /dev/null &
+        killerpid=$!
+        ec=0
+        # cf. ./testkillpid
+        wait $pidtokill || ec=$?  # may not work correctly if $pidtokill is the same as an old, finished process.
+        # leave the killer there in case 'wait' didn't work: kill $killerpid >& /dev/null &  # the killer may be still sleeping; we can kill it in background to save time
+        # use $? as the suffix to distinguish succeeded runs from failed runs:
+        if [[ "$debug" == "true" && $ec -ne 0 ]]; then
+            echo "Execution failure in executecode: $exefile $oneinput >> $outputsfile.otmp" | tee -a $LOGFILE
+        fi
+        echo "O$currentid.$ii.$ec" >> "$outputsfile"  # output separator
+        cat "$outputsfile.otmp" >> "$outputsfile"
+        ii=$((ii+1))
+    done < <( find $3 -maxdepth 1 -name "I*" )
+    if [ $ii -gt 0 ]; then
+        rm $outputsfile.otmp
+    fi
+    return 0
+}
+
+# compile a representative file and execute it
+# parameters:
+# $1 - the current cluster directory (absolute and relative should both be fine)
+# $2 - the code file name
+# $3 - the input file
+# $4 - the output file (default: $1/$metadatadir/O$currentid.0.$?)
+executerepcode()
+{
+    if [ "$debug" == "true" ]; then
+        echo "ClusterCode: executerepcode $1 $2 $3 $4" | tee -a $LOGFILE
+    fi
+
+    if ! [ -d $1 ]; then
+        echo "Error: executerepcode: invalid cluster '$1'" | tee -a $LOGFAILED
+        return 65
+    fi
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: executerepcode: no id assigned for the input" | tee -a $LOGFAILED
+        return 65
+    fi
+    local codefile=$2
+    if ! [ -f "$2" ]; then
+        echo "Error: executerepcode: code trunk '$2' invalid" | tee -a $LOGFAILED
+        return 65
+    fi
+    if ! [ -f $3 ]; then
+        echo "Error: executerepcode: input file invalid '$3'" | tee -a $LOGFAILED
+        return 65
+    fi
+
+    # set the output file
+    if [ "$4" != "" ]; then
+        echo "Warning: executerepcode: not supported output file" | tee -a $LOGFAILED
+    fi
+    local outputfn=$1/$metadatadir/O${currentid}.0
+
+    # check exefile
+    local exefile=${codefile%.c}.exe
+    if [[ ! -f "$exefile" ]]; then
+        local genlinkfn=$(headerObjFile $codefile)
+        if [[ $? -ne 0 ]]; then
+            echo "Error: executerepcode: headerObjFile $codefile" | tee -a $LOGFAILED
+            return 1
+        fi
+        if [[ "$debug" == "true" ]]; then
+            echo "executerepcode: ${CC} -o $exefile ${scriptdir}/../C/dycmain.o $codefile $genlinkfn ${CCFLAGS}" | tee -a $LOGFILE
+        fi
+        ${CC} -o "$exefile" ${scriptdir}/../C/dycmain.o "$codefile" "$genlinkfn" ${CCFLAGS} >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: executerepcode: Compiling failure: $2" | tee -a $LOGFAILED
+            return 1
+        fi
+    fi
+
+    # actual execution
+    if [[ "$debug" == "true" ]]; then
+        echo "executerepcode: $exefile $3 > $outputfn" | tee -a $LOGFILE
+    fi
+    local pidtokill=
+    local killerpid=
+    $exefile "$3" > "$outputfn" &
+    pidtokill=$!
+    waittokillpid $pidtokill 500000 >& /dev/null &
+    killerpid=$!
+    local ec=0
+    wait $pidtokill || ec=$?  # may not work correctly if $pidtokill is the same as an old, finished process; then $ec may not be right...TODO
+    # leave the killer there in case 'wait' didn't work: kill $killerpid >& /dev/null &
+    if [[ "$debug" == "true" && $ec -ne 0 ]]; then
+        echo "Execution failure in executerepcode: $exefile $3 > $outputfn" | tee -a $LOGFILE
+    fi
+    mv "${outputfn}" "${outputfn}.${ec}"
+}
+
+# for each code file, do execution and move together;
+# this way the whole process may be easier to be incremental.
+# $1 - the cluster directory
+# $2 - the next id for input
+executeandmoveall ()
+{
+    if [[ "$debug" == "true" ]]; then
+        echo "ClusterCode: executeandmoveall $1" | tee -a $LOGFILE
+    fi
+
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: executeandmoveall: no id assigned for the cluster '$1'" | tee -a $LOGFAILED
+        return 65
+    fi
+    if ! [ -d "$1" ];then
+      echo "Error: executeandmoveall: invalid directory '$1'" | tee -a $LOGFAILED
+      return 1
+    fi
+    local spareid=$2
+    if [[ "$spareid" == "" || $spareid -le $currentid ]]; then
+        echo "Error: executeandmoveall: next id '$spareid' invalid. Current id $currentid" | tee -a $LOGFAILED
+        return 65
+    fi
+
+    # get the representative code file of the cluster
+    local repcodefn=$(getrepresentative $1)
+    if [[ $? -ne 0 || "$repcodefn" == "" ]]; then
+        # invalid .c file
+        echo "Error: executeandmoveall: invalid representative file '$repcodefn' for $1" | tee -a $LOGFAILED
+        return 1
+    fi
+
+    local ec=0
+
+    # generate random values for the .c file and store it as $1/$metadatadir/I$currentid
+    if [ $timing -eq 1 ]; then
+        (time generaterandomvalues $repcodefn $1/$metadatadir $currentid) 2>> $TIMEFILE
+        ec=$?
+        echo "generaterandomvalues $repcodefn $1/$metadatadir $currentid" >> $TIMEFILE
+    else
+        generaterandomvalues $repcodefn $1/$metadatadir $currentid
+        ec=$?
+    fi
+    if [ $ec -ne 0 ]; then
+        echo "Error: generaterandomvalues $repcodefn $1/$metadatadir $currentid" | tee -a $LOGFAILED
+        return 1
+    fi
+
+    # permute the random values (randomly n! times) and store them all into one file: $1/$metadatadir/Ip${currentid}
+    mkdir -p $1/$metadatadir
+    if [ $timing -eq 1 ]; then
+        (time permuteinputs $1 ${repcodefn%.c}.ins $1/$metadatadir/Ip$currentid) 2>> $TIMEFILE
+        ec=$?
+        echo "permuteinputs $1 ${repcodefn%.c}.ins $1/$metadatadir/Ip$currentid" >> $TIMEFILE
+    else
+        permuteinputs $1 ${repcodefn%.c}.ins $1/$metadatadir/Ip$currentid
+        ec=$?
+    fi
+    if [ $ec -ne 0 ]; then
+        echo "Error: permuteinputs $1 ${repcodefn%.c}.ins $1/$metadatadir/Ip$currentid" | tee -a $LOGFAILED
+        return 1
+    fi
+
+    # move the representative to a new cluster and execute it (and store the output in $spareid/$metadatadir) unconditionally
+    movecodetoanewcluster $1 $repcodefn $spareid
+    if [ $? -eq 0 ]; then
+        executerepcode $1/$spareid $repcodefn $1/$metadatadir/I${currentid}  # the output file is $1/$spareid/$metadatadir/O${spareid}.0.$?
+        spareid=`cat $1/$metadatadir/nextid`
+    fi
+
+    pushd . >& /dev/null
+    cd $1
+    # extract the inputs, much faster but cost disk space, so remember to delete it afterwards
+    mkdir -p $metadatadir/ins
+    $scriptdir/extractallinputs $metadatadir/Ip$currentid $metadatadir/ins
+
+    # for each code and each subcluster, 
+    # if it doesn't overlap with the representative for a subcluster,
+    #    then execute, store outputs, and dispatch;
+    # if no matching based on outputs, then add it into a new subcluster:
+    local fn=
+    while read fn; do
+        fn=`echo $fn | cut -d' ' -f1`  # assume filenames contain no ' '
+        if [[ "$debug" == "true" ]]; then
+            echo "Searching for matching clusters for $fn under $1 ......" | tee -a $LOGFILE
+        fi
+        local tonewcluster=1
+        local executedonce=0
+        local onecluster=
+        while read onecluster; do
+            local clusterid=`basename $onecluster`
+            repcodefn=$(head -n 1 $onecluster/$metadatadir/C$clusterid)
+            if [ $? -ne 0 ]; then # there is no valid representative file for this cluster
+                continue
+            fi
+            if [ "$repcodefn" == "$fn" ]; then
+                if [[ "$debug" == "true" ]]; then
+                    echo "----> $fn is the representative for the cluster No. $onecluster" | tee -a $LOGFILE
+                fi
+                tonewcluster=0
+                break
+            fi
+            if [ $overlaplimit -lt 100 ]; then
+                if ( isoverlap $fn $repcodefn $overlaplimit ); then
+                    if [[ "$debug" == "true" ]]; then
+                        echo "----> $fn overlaps more than ${overlaplimit}% with $repcodefn in cluster No. $onecluster" | tee -a $LOGFILE
+                    fi
+                    # move the code file into $onecluster:
+                    echo "$fn" >> "$onecluster/$metadatadir/L$clusterid"
+                    tonewcluster=0
+                    continue
+                fi
+            fi
+            # else, execute (at most once for all the subclusters) and compare its outputs with the representative
+            if [ $executedonce -eq 0 ]; then
+                #local inputsfile=$1/$metadatadir/Ip$currentid
+                local inputdir=$1/$metadatadir/ins
+                if [ $timing -eq 1 ]; then
+                    (time executecode $1 $fn $inputdir) 2>> $TIMEFILE
+                    ec=$?
+                    echo "executecode $1 $fn $inputdir" >> $TIMEFILE
+                else
+                    executecode $1 $fn $inputdir
+                    ec=$?
+                fi
+                if [ $ec -ne 0 ]; then
+                    echo "Error: executeandmoveall: executecode $1 $fn $inputdir" | tee -a $LOGFAILED
+                    executedonce=-1
+                    continue
+                else
+                    executedonce=1
+                fi
+            fi
+            if [ $executedonce -ne 1 ]; then
+                echo "Error: executeandmoveall: no successful execution for $fn. Skip output comparison with cluster $onecluster." | tee -a $LOGFAILED
+                # TODO: to distinguish compilation failures from execution failures for further improvement.
+                continue
+            fi
+
+            # only do the comparison when executions are successfully
+            local repoutputfn=   # need to separate local declaration from assignment to get $?
+            repoutputfn=`ls $onecluster/$metadatadir/O$clusterid.0.*`  # should be one for representatives; could be zero if error occurred
+            # TODO: the above code can still behavior in an unwanted way (1/1000...bash bug/feature?...) and cause false positives <-- TODO
+            if [ $? -ne 0 ]; then
+                if [[ "$debug" == "true" ]]; then
+                    echo "Error: executeandmoveall: no output found for cluster $onecluster, repcodefn=$repcodefn" | tee -a $LOGFAILED
+                fi
+                continue
+            fi
+            if [[ "$debug" == "true" ]]; then
+                echo "executeandmoveall: $scriptdir/componeset $repoutputfn $metadatadir/out" | tee -a $LOGFILE
+            fi
+            if ( $scriptdir/componeset $repoutputfn $metadatadir/out ); then
+                if [[ "$debug" == "true" ]]; then
+                    echo "----> $fn matched with $repcodefn in cluster No. $onecluster" | tee -a $LOGFILE
+                fi
+                echo "$fn" >> "$onecluster/$metadatadir/L$clusterid"  # TODO: for similarity<1.0, we can't mv or break yet.
+                tonewcluster=0
+                break
+            fi
+        done < $metadatadir/H$currentid
+
+        if [ $tonewcluster -eq 1 ]; then
+            # if not belong to any existing cluster, create a new directory named $spareid
+            if [[ "$debug" == "true" ]]; then
+                echo "----> $fn matched with None. Move to a new cluster No. $spareid" | tee -a $LOGFILE
+            fi
+            movecodetoanewcluster $1 $fn $spareid  # $1 should be an absolute path
+            if [ $? -eq 0 ]; then
+                # prepare the representative output for the new cluster
+                executerepcode $spareid $fn $metadatadir/I${currentid}
+                spareid=`cat $metadatadir/nextid`
+            fi
+        fi
+
+    done < $metadatadir/L$currentid
+
+    local tmpdir=
+    tmpdir=`mktemp -d -p $metadatadir`
+    if [ $? -ne 0 ]; then
+        rm -rf $metadatadir/ins
+    else
+        # do it in background to save some time
+        mv $metadatadir/ins $tmpdir
+        rm -rf $tmpdir &
+    fi
+
+    popd >& /dev/null
+    return 0
+}
+
+# Depth-firstly iterate all INPUT/i
+# assume a sorted code list have been put there
+# NOTE: recursion may be very slow in bash
+# $1 - cluster directory
+# $2 - the next available id
+iterateall ()
+{
+    if [[ "$debug" == "true" ]]; then
+        echo "ClusterCode: iterateall: $1 $2" | tee -a $LOGFILE
+    fi
+
+    local clusterdir=$1
+    if [ ! -d "$clusterdir" ]; then
+        echo "Error: iterateall: directory '$clusterdir' invalid." | tee -a $LOGFAILED
+        return 65
+    fi
+    local currentid=`basename $1`
+    if [ "$currentid" == "" ]; then
+        echo "Error: iterateall: no id assigned for the input" | tee -a $LOGFAILED
+        return 65
+    fi
+    local spareid=$2
+    if [[ "$spareid" == "" || $spareid -le $currentid ]]; then
+        echo "Error: iterateall: next id '$spareid' invalid. Current id $currentid" | tee -a $LOGFAILED
+        return 65
+    fi
+
+    local ec=0
+
+    mkdir -p $clusterdir/$metadatadir
+    if [ $timing -eq 1 ]; then
+        (time executeandmoveall $clusterdir $spareid) 2>> $TIMEFILE
+        ec=$?
+        echo "executeandmoveall $clusterdir $spareid" >> $TIMEFILE
+    else
+        executeandmoveall $clusterdir $spareid
+        ec=$?
+    fi
+    # return whenever an error occurs
+    if [ $ec -ne 0 ]; then
+      echo "Error: executeandmoveall $clusterdir $spareid" | tee -a $LOGFAILED
+      return 1
+    fi
+    # update spareid for next run; the nextid should exist if executeandmoveall succeeds
+    spareid=`cat $clusterdir/$metadatadir/nextid`
+
+    # recursively handle each subcluster
+    local onecluster=
+    while read onecluster; do
+        onecluster=$clusterdir/$onecluster
+        oktoterminate $onecluster
+        if [ $? -ne 0 ]; then
+          echo "ClusterCode: Terminating for the cluster: $onecluster" | tee -a $LOGFILE
+        else
+            if [ $timing -eq 1 ]; then
+                (time iterateall $onecluster $spareid) 2>> $TIMEFILE
+                ec=$?
+                echo "iterateall $onecluster $spareid" >> $TIMEFILE
+            else
+                iterateall $onecluster $spareid
+                ec=$?
+            fi
+            if [ $ec -ne 0 ]; then
+                echo "Error: iterateall $onecluster $spareid" | tee -a $LOGFAILED
+            else
+                # update spareid for next subcluster; the nextid should exist if iterateall succeeds
+                # this is unneccessary since different subclusters may use the same $spareid
+                spareid=`cat $onecluster/$metadatadir/nextid`
+            fi
+        fi
+    done < $clusterdir/$metadatadir/H$currentid
+}
+
+
+# main entrance
+
+if [[ $# -ne 1 && $# -ne 2 ]]; then
+    echo "Usage: $0 <root_of_INPUTs [startid]>" 1>&2
+    exit 65
+fi
+if [[ $# -ge 1 ]]; then
+    if [ ! -d "$1" ]; then
+        echo "Error: input directory '$1' invalid." 1>&2
+        exit 65
+    fi
+    rootdir=$( cd $1; pwd )
+fi
+if [ $# -eq 2 ]; then
+    if [ $2 -lt 0 ]; then
+        echo "Error: StartID should >= 0" 1>&2
+        exit 65
+    fi
+    if [ ! -d $1/$2 ]; then
+        echo "Error: directory '$1/$2' invalid" 1>&2
+        exit 65
+    fi
+    startid=$2
+fi
+
+LOGFILE=$rootdir/$LOGFILE
+LOGFAILED=$rootdir/$LOGFAILED
+TIMEFILE=$rootdir/$TIMEFILE
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFAILED
+echo -n "" > $TIMEFILE
+
+if ! [ -f $rootdir/$startid/$metadatadir/L$startid ]; then
+    echo "Error: $rootdir/$startid/$metadatadir/L$startid invalid. Create it first by running:" | tee -a $LOGFAILED
+    echo "$scriptdir/initcodelist <srcdir> $rootdir/$startid/$metadatadir/L$startid" | tee -a $LOGFAILED
+    exit 65
+fi
+nextid=$((startid+1))
+if ! [ -f $rootdir/$startid/$metadatadir/nextid ]; then
+    echo $nextid > $rootdir/$startid/$metadatadir/nextid
+else
+    nextid=`cat $rootdir/$startid/$metadatadir/nextid`
+    if [ $nextid -le $startid ]; then
+        nextid=$((startid+1))
+        echo $nextid > $rootdir/$startid/$metadatadir/nextid
+    fi
+fi
+
+ec=0
+
+if [ $timing -eq 1 ]; then
+    (time iterateall $rootdir/$startid $nextid) 2>> $TIMEFILE
+    ec=$?
+    echo "iterateall $rootdir/$startid $nextid" >> $TIMEFILE
+else
+    iterateall $rootdir/$startid $nextid 
+    ec=$?
+fi
+if [ $ec -ne 0 ]; then
+  echo "Error: iterateall $rootdir/$startid $nextid" | tee -a $LOGFAILED
+  exit 1
+fi
+
+

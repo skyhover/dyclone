@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# The script does similar thing to "runonce", but just for one file
+
+#cilcmd="/home/jianglx/research/CIL/cil/bin/cilly"
+cilcmd="/home/jianglx/research/CIL/cil/obj/x86_LINUX/cilly.asm.exe --commPrintLnSparse"
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <srcfile>"
+    exit 1
+fi
+
+srcopt=$1
+if ! [ -f "$srcopt" ]; then
+    echo "srcfile='$srcopt' is not valid."
+    exit 2
+fi
+
+scriptpath=$( cd `dirname $0`; pwd )
+
+cd `dirname $srcopt` || exit 3
+fn=`basename $srcopt`
+nfn=${fn%.*}.dyctmp.${fn##*.}
+fnn=${fn%.*}.cil.c
+
+echo -n "Fixing '$fn' --> $nfn ...... "
+cp -f "$fn" "$nfn"
+
+# run the code transformation once is enough: 
+# No.1:
+$scriptpath/codefix "$nfn" # CIL can't parse some C features
+
+# No.2: run a native CIL once first so that each stmt is 
+#       on a different line so that each code trunk has 
+#       a unique name:
+$cilcmd  --out "${fnn}" "$nfn"
+ecode=$?
+if [ $ecode -ne 0 ]; then
+    echo "'$nfn' --> $fnn ...... Failed."
+else
+    # uneccessary when we use --commPrintLnSparse provided by CIL: sed -i "s/^#.*//" "${fnn}"
+    echo "Done."
+fi
+rm -f "$nfn" # for saving disk space
+
+

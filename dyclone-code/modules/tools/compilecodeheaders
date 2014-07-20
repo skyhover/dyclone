@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# compare all the header files for code trunks (.hd.c)
+# Update: use shared libraries instead of static ones; as long as we don't move files around, everything should be fine.
+
+scriptdir=$(cd `dirname $0`; pwd)
+CC=gcc
+CCFLAGS="-fpic -I ${scriptdir}/../C/" # too slow to use -O3 on one machine
+debug="true"
+
+
+if [[ $# -ne 1 && $# -ne 2 ]]; then
+    echo "Usage: $0 <src dir> [<dst dir>]"
+    exit 65
+fi
+
+if [[ ! -d "$1" ]]; then
+    echo "Error: src dir '$1' invalid"
+    exit 65
+fi
+srcabspath=$( cd $1; pwd )
+dstabspath=
+
+LOGFILE=__dyc_`basename $0`.log
+LOGFILEFAIL=__dyc_`basename $0`.failed
+if [[ "$2" != "" ]]; then
+    if [[ ! -d "$2" ]]; then
+        echo "Error: dst dir '$2' invalid"
+        exit 65
+    else
+        dstabspath=$(cd $2; pwd)
+        LOGFILE=$dstabspath/$LOGFILE
+        LOGFILEFAIL=$dstabspath/$LOGFILEFAIL
+    fi
+else 
+    # use the same dir as srcabspath for dstabspath
+    LOGFILE=$srcabspath/$LOGFILE
+    LOGFILEFAIL=$srcabspath/$LOGFILEFAIL
+fi
+
+echo -n "" > $LOGFILE
+echo -n "" > $LOGFILEFAIL
+
+find $srcabspath -maxdepth 2 -name "*.hd.c" | while read oneinput; do
+    objname=${oneinput%.c}.o  # the same location as the source code
+    if [[ "$dstabspath" != "" ]]; then
+        # use the location provided by $2 (not mimicing the src structure yet)
+        objname=$dstabspath/`basename $objname`
+    fi
+    libname=${objname%.o}.so
+    if [[ ! -f "$libname" ]]; then
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: ${CC} ${CCFLAGS} -c -o $objname $oneinput" | tee -a $LOGFILE
+        fi
+        ${CC} ${CCFLAGS} -c -o "$objname" "$oneinput" >& /dev/null # too slow to output to stderr
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Compiling failure: $oneinput" | tee -a $LOGFILEFAIL
+        else
+            ${CC} -shared -o $libname $objname
+            if [ $? -eq 0 ]; then
+                # save some disk space
+                strip $libname
+                rm $objname
+            fi
+        fi
+    else
+        if [[ "$debug" == "true" ]]; then
+            echo "Compiling: $libname exists already" | tee -a $LOGFILE
+        fi
+    fi
+done
+
+
